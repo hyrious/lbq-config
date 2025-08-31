@@ -1,4 +1,7 @@
 {
+  "dependencies": {
+    "nano-spawn": "^1.0.2"
+  },
   "devDependencies": {
     "@hyrious/configs": "^0.1.4",
     "@types/node": "^24.3.0"

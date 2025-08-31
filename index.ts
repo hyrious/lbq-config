@@ -5,9 +5,12 @@ import { createWriteStream, existsSync } from 'node:fs'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { dirname, join } from 'node:path'
+
+import spawn from 'nano-spawn'
 import { RegisterFunction } from './lib/base'
 
 export default function install(register: RegisterFunction) {
+	const win32 = process.platform == 'win32'
 	const downloadsFolder = join(homedir(), 'Downloads')
 
 	register('iosevka', async (_1, arg) => {
@@ -41,4 +44,10 @@ export default function install(register: RegisterFunction) {
 			console.error(content)
 		}
 	}, 'Append --sarasa to download Sarasa')
+
+	if (win32) register('vcvarsall', async () => {
+		const vswhere = String.raw`C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe`
+		const vsBase = (await spawn(vswhere, ['-latest', '-property', 'installationPath'])).output.trim()
+		console.log(join(vsBase, 'vc/Auxiliary/Build/vcvarsall.bat'))
+	}, 'Find vcvarsall.bat')
 }

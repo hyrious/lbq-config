@@ -9,6 +9,10 @@ pnpmfileChecksum: sha256-1AZ7IYsOcNT3qnTTrMZZrNcXwrMCEjWtrwDoh1lposw=
 importers:
 
   .:
+    dependencies:
+      nano-spawn:
+        specifier: ^1.0.2
+        version: 1.0.2
     devDependencies:
       '@hyrious/configs':
         specifier: ^0.1.4
@@ -25,6 +29,10 @@ packages:
   '@types/node@24.3.0':
     resolution: {integrity: sha512-aPTXCrfwnDLj4VvXrm+UUCQjNEvJgNA8s5F1cvwQU+3KNltTOkBm1j30uNLyqqPNe7gE3KFzImYoZEfLhp4Yow==}
 
+  nano-spawn@1.0.2:
+    resolution: {integrity: sha512-21t+ozMQDAL/UGgQVBbZ/xXvNO10++ZPuTmKRO8k9V3AClVRht49ahtDjfY8l1q6nSHOrE5ASfthzH3ol6R/hg==}
+    engines: {node: '>=20.17'}
+
   undici-types@7.10.0:
     resolution: {integrity: sha512-t5Fy/nfn+14LuOc2KNYg75vZqClpAiqscVvMygNnlsHBFpSXdJaYtXMcdNLpl/Qvc3P2cB3s6lOV51nqsFq4ag==}
 
@@ -35,5 +43,7 @@ snapshots:
   '@types/node@24.3.0':
     dependencies:
       undici-types: 7.10.0
+
+  nano-spawn@1.0.2: {}
 
   undici-types@7.10.0: {}
