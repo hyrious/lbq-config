@@ -1,0 +1,39 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+pnpmfileChecksum: sha256-1AZ7IYsOcNT3qnTTrMZZrNcXwrMCEjWtrwDoh1lposw=
+
+importers:
+
+  .:
+    devDependencies:
+      '@hyrious/configs':
+        specifier: ^0.1.4
+        version: 0.1.4
+      '@types/node':
+        specifier: ^24.3.0
+        version: 24.3.0
+
+packages:
+
+  '@hyrious/configs@0.1.4':
+    resolution: {integrity: sha512-EZGGqeBaSl+pngsRVYMyFBgYWFmlSw76UjsZLP8hHwNb0VMufhf4OtULWx5UHM228wJBC3vVZq0Tvqz0zikM8g==}
+
+  '@types/node@24.3.0':
+    resolution: {integrity: sha512-aPTXCrfwnDLj4VvXrm+UUCQjNEvJgNA8s5F1cvwQU+3KNltTOkBm1j30uNLyqqPNe7gE3KFzImYoZEfLhp4Yow==}
+
+  undici-types@7.10.0:
+    resolution: {integrity: sha512-t5Fy/nfn+14LuOc2KNYg75vZqClpAiqscVvMygNnlsHBFpSXdJaYtXMcdNLpl/Qvc3P2cB3s6lOV51nqsFq4ag==}
+
+snapshots:
+
+  '@hyrious/configs@0.1.4': {}
+
+  '@types/node@24.3.0':
+    dependencies:
+      undici-types: 7.10.0
+
+  undici-types@7.10.0: {}
