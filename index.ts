@@ -7,37 +7,43 @@ import { pipeline } from 'node:stream/promises'
 import { dirname, join } from 'node:path'
 
 import spawn from 'nano-spawn'
+import { confirm, isCancel } from '@clack/prompts'
 import { RegisterFunction } from './lib/base'
 
 export default function install(register: RegisterFunction) {
 	const win32 = process.platform == 'win32'
+	const macOS = process.platform == 'darwin'
 	const downloadsFolder = join(homedir(), 'Downloads')
 
-	register('iosevka', async (_1, arg) => {
+	register('iosevka', async (_1, ...args) => {
 		let mirror = 'https://mirrors.tuna.tsinghua.edu.cn'
 		let hashfile = mirror + '/github-release/be5invis/Iosevka/LatestRelease/SHA-256.txt'
-		if (arg == '--sarasa') {
+		if (args.includes('--sarasa')) {
 			hashfile = mirror + '/github-release/be5invis/Sarasa-Gothic/LatestRelease/SHA-256.txt'
 		}
 		let content = await fetch(hashfile).then(r => r.text())
 		let line = content.split('\n').find(e => e.includes('SuperTTC'))
 		if (line) {
 			const [_, name] = line.split(/\s+/)
-            const dest = join(downloadsFolder, name)
+			const dest = join(downloadsFolder, name)
 			if (existsSync(dest)) {
 				console.log(dest, 'already exists')
 			} else {
-				console.log('Downloading', dest)
-				const src = dirname(hashfile) + '/' + name
-				const response = await fetch(src)
-				if (response.ok && response.body) {
-					await pipeline(
-						Readable.from(response.body),
-						createWriteStream(dest), { end: true }
-					)
-					console.log('Done.')
-				} else {
-					console.error(await response.text())
+				let out = await confirm({ message: `Download ${name}?` })
+				if (out == true) {
+					console.log('Downloading', dest)
+					const src = dirname(hashfile) + '/' + name
+					const response = await fetch(src)
+					if (response.ok && response.body) {
+						await pipeline(
+							Readable.from(response.body),
+							createWriteStream(dest), { end: true }
+						)
+						console.log('Done.')
+						if (macOS) console.log('Hint: Copy the TTC file to ~/Library/Fonts to finish installation.')
+					} else {
+						console.error(await response.text())
+					}
 				}
 			}
 		} else {
