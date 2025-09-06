@@ -1,7 +1,8 @@
 {
   "dependencies": {
     "@clack/prompts": "^0.11.0",
-    "nano-spawn": "^1.0.2"
+    "nano-spawn": "^1.0.2",
+    "tar": "^7.4.3"
   },
   "devDependencies": {
     "@hyrious/configs": "^0.1.4",

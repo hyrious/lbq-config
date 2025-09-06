@@ -1,13 +1,13 @@
 /// <reference types="node" />
 
 import { homedir } from 'node:os'
-import { createWriteStream, existsSync } from 'node:fs'
+import { createWriteStream, existsSync, mkdirSync } from 'node:fs'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { dirname, join } from 'node:path'
 
 import spawn from 'nano-spawn'
-import { confirm, isCancel } from '@clack/prompts'
+import { confirm } from '@clack/prompts'
 import { RegisterFunction } from './lib/base'
 
 export default function install(register: RegisterFunction) {
@@ -56,4 +56,24 @@ export default function install(register: RegisterFunction) {
 		const vsBase = (await spawn(vswhere, ['-latest', '-property', 'installationPath'])).output.trim()
 		console.log(join(vsBase, 'vc/Auxiliary/Build/vcvarsall.bat'))
 	}, 'Find vcvarsall.bat')
+
+	register('n1', async (_, ...packages) => {
+		const tar = await import('tar')
+		for (const pkg of packages) {
+			const tarball = (await spawn('npm', ['view', pkg, 'dist.tarball'])).output.trim()
+			const response = await fetch(tarball)
+			if (response.ok && response.body) {
+				const dist = join('node_modules', pkg)
+				mkdirSync(dist, { recursive: true })
+				console.log('Polling', dist)
+				await pipeline(
+					Readable.from(response.body),
+					tar.extract({ strip: 1, cwd: dist }), { end: true }
+				)
+			} else {
+				console.error(response.statusText)
+			}
+		}
+		if (packages.length == 0) console.log('Usage: n1 [packages...]')
+	}, 'Manually download a package to node_modules')
 }
