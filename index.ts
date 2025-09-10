@@ -76,4 +76,9 @@ export default function install(register: RegisterFunction) {
 		}
 		if (packages.length == 0) console.log('Usage: n1 [packages...]')
 	}, 'Manually download a package to node_modules')
+
+	register('update', async () => {
+		console.log('Updating...')
+		await spawn('git', ['pull', '--ff-only'], { cwd: import.meta.dirname, stdio: 'inherit' })
+	}, 'Run git pull in ' + import.meta.dirname)
 }
