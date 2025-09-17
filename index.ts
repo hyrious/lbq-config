@@ -136,5 +136,11 @@ export default function install(register: RegisterFunction) {
 				}
 			})
 		}
-	}, 'Check package updates and open the diff page')
+	}, 'Show package updates and url to the diff page')
+
+	if (win32) register('nodejs', async () => {
+		let data = await fetch('https://registry.npmmirror.com/-/binary/node/latest/').then(r => r.json())
+		let info = data.findLast((e: { name: string }) => e.name.endsWith('-x64.msi'))
+		console.log(info.url)
+	}, 'Get latest nodejs download url')
 }
