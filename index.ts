@@ -81,4 +81,60 @@ export default function install(register: RegisterFunction) {
 		console.log('Updating...')
 		await spawn('git', ['pull', '--ff-only'], { cwd: import.meta.dirname, stdio: 'inherit' })
 	}, 'Run git pull in ' + import.meta.dirname)
+
+	register('taze', async (_, ...args) => {
+		const { CheckPackages, resolvePackage } = await import('taze')
+		if (args.includes('-g')) {
+			const stdout = (await spawn('npm', ['ls', '--global', '--depth=0', '--json'])).output.trim()
+			const json = JSON.parse(stdout) as { dependencies: { [x: string]: { version: string } | undefined } }
+			const pkgs = Object.entries(json.dependencies).filter(a => a[1]?.version)
+			const pkg: import('taze').PackageMeta = {
+				agent: 'npm',
+				private: true,
+				type: 'global',
+				resolved: [],
+				raw: null,
+				version: '',
+				filepath: '',
+				relative: '',
+				deps: pkgs.map(([name, i]) => ({
+					name,
+					currentVersion: `^${i?.version}`,
+					update: true,
+					source: 'dependencies'
+				})),
+				name: 'npm (global)'
+			}
+			await resolvePackage(pkg, {
+				mode: 'latest',
+				loglevel: 'error',
+				maturityPeriod: 2,
+				includeLocked: true
+			}, () => true)
+			pkg.resolved.filter(i => i.update).forEach(change => {
+				let name = change.name
+				let now = change.currentVersion.replace(/^[^\d]+/, '')
+				let then = change.targetVersion.replace(/^[^\d]+/, '')
+				let a = `${name}@${now}`, b = `${name}@${then}`
+				console.log(change.name, now, '→ ', then, `https://hyrious.me/npm-diff/?a=${a}&b=${b}`)
+			})
+		} else {
+			await CheckPackages({
+				mode: 'latest',
+				loglevel: 'error',
+				maturityPeriod: 2,
+				includeLocked: true
+			}, {
+				afterPackageEnd(pkg) {
+					pkg.resolved.filter(i => i.update).forEach(change => {
+						let name = change.name
+						let now = change.currentVersion.replace(/^[^\d]+/, '')
+						let then = change.targetVersion.replace(/^[^\d]+/, '')
+						let a = `${name}@${now}`, b = `${name}@${then}`
+						console.log(change.name, now, '→ ', then, `https://hyrious.me/npm-diff/?a=${a}&b=${b}`)
+					})
+				}
+			})
+		}
+	}, 'Check package updates and open the diff page')
 }
