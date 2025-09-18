@@ -80,6 +80,7 @@ export default function install(register: RegisterFunction) {
 	register('update', async () => {
 		console.log('Updating...')
 		await spawn('git', ['pull', '--ff-only'], { cwd: import.meta.dirname, stdio: 'inherit' })
+		await spawn('pnpm', ['install'], { cwd: import.meta.dirname, stdio: 'inherit' })
 	}, 'Run git pull in ' + import.meta.dirname)
 
 	register('taze', async (_, ...args) => {
