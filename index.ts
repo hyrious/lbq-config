@@ -112,13 +112,7 @@ export default function install(register: RegisterFunction) {
 				maturityPeriod: 2,
 				includeLocked: true
 			}, () => true)
-			pkg.resolved.filter(i => i.update).forEach(change => {
-				let name = change.name
-				let now = change.currentVersion.replace(/^[^\d]+/, '')
-				let then = change.targetVersion.replace(/^[^\d]+/, '')
-				let a = `${name}@${now}`, b = `${name}@${then}`
-				console.log(change.name, now, '→ ', then, `https://hyrious.me/npm-diff/?a=${a}&b=${b}`)
-			})
+			show(pkg.resolved.filter(i => i.update))
 		} else {
 			await CheckPackages({
 				mode: 'latest',
@@ -127,15 +121,27 @@ export default function install(register: RegisterFunction) {
 				includeLocked: true
 			}, {
 				afterPackageEnd(pkg) {
-					pkg.resolved.filter(i => i.update).forEach(change => {
-						let name = change.name
-						let now = change.currentVersion.replace(/^[^\d]+/, '')
-						let then = change.targetVersion.replace(/^[^\d]+/, '')
-						let a = `${name}@${now}`, b = `${name}@${then}`
-						console.log(change.name, now, '→ ', then, `https://hyrious.me/npm-diff/?a=${a}&b=${b}`)
-					})
+					show(pkg.resolved.filter(i => i.update))
 				}
 			})
+		}
+		function show(changes: import('taze').ResolvedDepChange[]) {
+			if (changes.length == 0) {
+				console.log('No updates.')
+				return
+			}
+			console.log()
+			let maxLen = changes.reduce((max, c) => Math.max(max, c.name.length), 0)
+			changes.forEach(change => {
+				let name = change.name
+				let now = change.currentVersion.replace(/^[^\d]+/, '')
+				let then = change.targetVersion.replace(/^[^\d]+/, '')
+				let a = `${name}@${now}`, b = `${name}@${then}`
+				let link = [now, win32 ? '→ ' : '→', then].join(' ')
+				let url = `https://hyrious.me/npm-diff/?a=${a}&b=${b}`
+				console.log(`  ${name.padEnd(maxLen)}  \x1b]8;;${url}\x07${link}\x1b]8;;\x07`)
+			})
+			console.log()
 		}
 	}, 'Show package updates and url to the diff page')
 
