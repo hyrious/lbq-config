@@ -9,6 +9,7 @@ import { dirname, join } from 'node:path'
 import spawn from 'nano-spawn'
 import { confirm } from '@clack/prompts'
 import { RegisterFunction } from './lib/base'
+import { fetchWebPage } from './lib/fetchWebPage';
 
 export default function install(register: RegisterFunction) {
 	const win32 = process.platform == 'win32'
@@ -150,4 +151,18 @@ export default function install(register: RegisterFunction) {
 		let info = data.findLast((e: { name: string }) => e.name.endsWith('-x64.msi'))
 		console.log(info.url)
 	}, 'Get latest nodejs download url')
+
+	register('b', async (_, url) => {
+		if (!url) {
+			console.log('Usage: lbq b https://example.org')
+			return
+		}
+		const output = await fetchWebPage(url)
+		if (!output) {
+			console.log('No content.')
+			return
+		}
+		// https://github.com/charmbracelet/glow
+		await spawn('glow', ['-'], { stdin: { string: output }, stdout: 'inherit' })
+	}, 'Browse a web page and output in markdown')
 }
