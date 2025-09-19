@@ -1,55 +1,31 @@
 /// <reference types="node" />
 
-import { homedir } from 'node:os'
-import { createWriteStream, existsSync, mkdirSync } from 'node:fs'
-import { Readable } from 'node:stream'
-import { pipeline } from 'node:stream/promises'
-import { dirname, join } from 'node:path'
+import { mkdirSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 
-import spawn from 'nano-spawn'
-import { confirm } from '@clack/prompts'
-import { RegisterFunction } from './lib/base'
+import spawn from 'nano-spawn';
+import { RegisterFunction } from './lib/base';
 
 export default function install(register: RegisterFunction) {
 	const win32 = process.platform == 'win32'
-	const macOS = process.platform == 'darwin'
-	const downloadsFolder = join(homedir(), 'Downloads')
+	const mirror = 'https://mirrors.tuna.tsinghua.edu.cn'
 
-	register('iosevka', async (_1, ...args) => {
-		let mirror = 'https://mirrors.tuna.tsinghua.edu.cn'
-		let hashfile = mirror + '/github-release/be5invis/Iosevka/LatestRelease/SHA-256.txt'
-		if (args.includes('--sarasa')) {
-			hashfile = mirror + '/github-release/be5invis/Sarasa-Gothic/LatestRelease/SHA-256.txt'
+	register('iosevka', async () => {
+		const table = await Promise.all(['Iosevka', 'Sarasa-Gothic'].map(async name => {
+			let hashfile = `${mirror}/github-release/be5invis/${name}/LatestRelease/SHA-256.txt`
+			let content = await fetch(hashfile).then(r => r.text())
+			let line = content.split('\n').find(e => e.includes('SuperTTC'))!
+			let fileName = line.split(/\s+/)[1]
+			let url = dirname(hashfile) + '/' + fileName
+			return [name, url]
+		}))
+		const maxLen = table.reduce((max, a) => Math.max(max, a[0].length), 0)
+		for (const row of table) {
+			console.log(row[0].padEnd(maxLen), row[1])
 		}
-		let content = await fetch(hashfile).then(r => r.text())
-		let line = content.split('\n').find(e => e.includes('SuperTTC'))
-		if (line) {
-			const [_, name] = line.split(/\s+/)
-			const dest = join(downloadsFolder, name)
-			if (existsSync(dest)) {
-				console.log(dest, 'already exists')
-			} else {
-				let out = await confirm({ message: `Download ${name}?` })
-				if (out == true) {
-					console.log('Downloading', dest)
-					const src = dirname(hashfile) + '/' + name
-					const response = await fetch(src)
-					if (response.ok && response.body) {
-						await pipeline(
-							Readable.from(response.body),
-							createWriteStream(dest), { end: true }
-						)
-						console.log('Done.')
-						if (macOS) console.log('Hint: Copy the TTC file to ~/Library/Fonts to finish installation.')
-					} else {
-						console.error(await response.text())
-					}
-				}
-			}
-		} else {
-			console.error(content)
-		}
-	}, 'Append --sarasa to download Sarasa')
+	}, 'Print URL to the latest Iosevka & Sarasa')
 
 	if (win32) register('vcvarsall', async () => {
 		const vswhere = String.raw`C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe`
@@ -150,4 +126,40 @@ export default function install(register: RegisterFunction) {
 		let info = data.findLast((e: { name: string }) => e.name.endsWith('-x64.msi'))
 		console.log(info.url)
 	}, 'Get latest nodejs download url')
+
+	register('private', async (_, ...args) => {
+		const { defineConfig } = await import('@hyrious/lbq')
+		const { default: fn } = await import('./private/index')
+		const lbq = await defineConfig(fn)
+
+		if (args[0] === '-l' || args[0] === '--list') {
+			console.log('Private actions:')
+			for (const line of lbq.list()) {
+				console.log('  ' + line)
+			}
+			return
+		}
+
+		const actionAndArgs = lbq.find(args)
+		if (!actionAndArgs) {
+			console.error('No matching action, try --list.')
+			process.exitCode = 1
+			return
+		}
+
+		const [action, matches, restArgs] = actionAndArgs
+		try {
+			await action.run(...matches, ...restArgs)
+		} catch (err) {
+			if (err && typeof err === 'object' && typeof err.stack === 'string') {
+				const { default: cleanStack } = await import('clean-stack')
+				console.error(cleanStack(err.stack))
+			} else if (err && typeof err === 'object' && typeof err.message === 'string') {
+				console.error(err.message)
+			} else {
+				console.error(err)
+			}
+			process.exitCode = 1
+		}
+	}, 'Pass arguments to private LBQ commands')
 }
