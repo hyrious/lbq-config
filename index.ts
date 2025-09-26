@@ -1,12 +1,13 @@
 /// <reference types="node" />
 
-import { mkdirSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { homedir } from 'node:os';
+import { existsSync, mkdirSync } from 'node:fs';
+import { basename, dirname, extname, join } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 
 import spawn from 'nano-spawn';
-import { RegisterFunction } from './lib/base';
+import { RegisterFunction, tryUnescape } from './lib/base';
 
 export default function install(register: RegisterFunction) {
 	const win32 = process.platform == 'win32'
@@ -162,4 +163,45 @@ export default function install(register: RegisterFunction) {
 			process.exitCode = 1
 		}
 	}, 'Pass arguments to private LBQ commands')
+
+	if (win32) register('get', async (_, input) => {
+		if (!input.startsWith('https://')) {
+			// WinGet does not provide parsable output [https://github.com/microsoft/winget-cli/issues/1753].
+			// So let's craft by hand.
+			await spawn('winget', ['show', input, '--source', 'winget'], { stdio: 'inherit' })
+			console.log('\n\tRun lbq get <URL> again to install it')
+		} else {
+			const fileName = tryUnescape(basename(input))
+			if (input.startsWith('https://github.com')) {
+				const [_, user, repo, ...rest] = new URL(input).pathname.split('/')
+				const last = rest.pop()!
+				const maybeMirror = `https://mirrors.tuna.tsinghua.edu.cn/github-release/${user}/${repo}/LatestRelease/${last}`
+				const response = await fetch(maybeMirror, { method: 'HEAD' }).catch(() => [] as unknown as Response)
+				if (response.ok) {
+					input = maybeMirror
+				}
+			}
+			const { confirm } = await import('@clack/prompts')
+			let ok = await confirm({ message: `Download ${fileName}?` })
+			if (ok === true) {
+				const output = join(homedir(), 'Downloads', fileName)
+				if (existsSync(output)) {
+					console.log(`Exists ${output}, skip download.`)
+				} else {
+					console.log(`Downloading to ${output}...`)
+					await spawn('curl', ['-L', '-o', output, input], { stdio: 'inherit' })
+				}
+				ok = await confirm({ message: `Install ${output}?` })
+				if (ok === true) {
+					if (output.endsWith('.msi')) {
+						spawn('msiexec', ['/i', output], { detached: true })
+					} else if (output.endsWith('.exe')) {
+						spawn(output, { detached: true })
+					} else {
+						console.log(`I don't know how to install ${extname(output)} files.`)
+					}
+				}
+			}
+		}
+	}, 'Search package from winget and install')
 }

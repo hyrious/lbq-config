@@ -8,3 +8,9 @@ export type RegisterFunction = {
 export function cleanVersion(v: string) {
 	return v.replace(/^[^\d]+/, '')
 }
+
+/** `try { decodeURIComponent(str) }` */
+export function tryUnescape(str: string) {
+	try { return decodeURIComponent(str) }
+	catch { return str }
+}
