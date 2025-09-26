@@ -5,12 +5,18 @@ export type RegisterFunction = {
 }
 
 /** `^1` &rarr; `1` */
-export function cleanVersion(v: string) {
+export function cleanVersion(v: string): string {
 	return v.replace(/^[^\d]+/, '')
 }
 
 /** `try { decodeURIComponent(str) }` */
-export function tryUnescape(str: string) {
+export function tryUnescape(str: string): string {
 	try { return decodeURIComponent(str) }
 	catch { return str }
+}
+
+/** `https://github.com/...` &rarr; `github.com` */
+export function hostname(str: string): string {
+	try { return (new URL(str)).hostname }
+	catch { return str.split('/')[0] || str }
 }

@@ -7,7 +7,7 @@ import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 
 import spawn from 'nano-spawn';
-import { RegisterFunction, tryUnescape } from './lib/base';
+import { hostname, RegisterFunction, tryUnescape } from './lib/base';
 
 export default function install(register: RegisterFunction) {
 	const win32 = process.platform == 'win32'
@@ -166,41 +166,41 @@ export default function install(register: RegisterFunction) {
 
 	if (win32) register('get', async (_, input) => {
 		if (!input.startsWith('https://')) {
+			const output = (await spawn('winget', ['show', input, '--source', 'winget'])).stdout
 			// WinGet does not provide parsable output [https://github.com/microsoft/winget-cli/issues/1753].
-			// So let's craft by hand.
-			await spawn('winget', ['show', input, '--source', 'winget'], { stdio: 'inherit' })
-			console.log('\n\tRun lbq get <URL> again to install it')
-		} else {
-			const fileName = tryUnescape(basename(input))
-			if (input.startsWith('https://github.com')) {
-				const [_, user, repo, ...rest] = new URL(input).pathname.split('/')
-				const last = rest.pop()!
-				const maybeMirror = `https://mirrors.tuna.tsinghua.edu.cn/github-release/${user}/${repo}/LatestRelease/${last}`
-				const response = await fetch(maybeMirror, { method: 'HEAD' }).catch(() => [] as unknown as Response)
-				if (response.ok) {
-					input = maybeMirror
-				}
+			// So let's search common languages by hand [https://github.com/search?q=repo%3Amicrosoft%2Fwinget-cli+name%3D%22ShowLabelInstallerUrl%22&type=code].
+			const ShowLabelInstallerUrl = ['安装程序 URL：', '安裝程式 URL:', 'Installer Url:', 'インストーラーの URL:', '설치 관리자 URL:']
+			let prefix = ''
+			const line = output.split('\n').find(line => ShowLabelInstallerUrl.some(s => line.trim().startsWith(prefix = s)))
+			if (line) {
+				input = line.trim().slice(prefix.length).trim()
+			} else {
+				console.error(output)
+				console.error('\n\tCannot find installer URL from winget output.')
+				process.exitCode = 1
+				return
 			}
-			const { confirm } = await import('@clack/prompts')
-			let ok = await confirm({ message: `Download ${fileName}?` })
-			if (ok === true) {
-				const output = join(homedir(), 'Downloads', fileName)
-				if (existsSync(output)) {
-					console.log(`Exists ${output}, skip download.`)
-				} else {
-					console.log(`Downloading to ${output}...`)
-					await spawn('curl', ['-L', '-o', output, input], { stdio: 'inherit' })
-				}
-				ok = await confirm({ message: `Install ${output}?` })
-				if (ok === true) {
-					if (output.endsWith('.msi')) {
-						spawn('msiexec', ['/i', output], { detached: true })
-					} else if (output.endsWith('.exe')) {
-						spawn(output, { detached: true })
-					} else {
-						console.log(`I don't know how to install ${extname(output)} files.`)
-					}
-				}
+		}
+		const fileName = tryUnescape(basename(input))
+		if (input.startsWith('https://github.com')) {
+			const [_, user, repo, ...rest] = new URL(input).pathname.split('/')
+			const last = rest.pop()!
+			const mirror = `https://mirrors.tuna.tsinghua.edu.cn/github-release/${user}/${repo}/LatestRelease/${last}`
+			const response = await fetch(mirror, { method: 'HEAD' }).catch(() => [] as unknown as Response)
+			if (response.ok) {
+				input = mirror
+			}
+		}
+		const { confirm } = await import('@clack/prompts')
+		let ok = await confirm({ message: `Download ${fileName} from ${hostname(input)}?` })
+		if (ok === true) {
+			const output = join(homedir(), 'Downloads', fileName)
+			if (existsSync(output)) {
+				console.log(`Exists ${output}, skip download.`)
+			} else {
+				console.log(`Downloading to ${output}...`)
+				await spawn('curl', ['-L', '-o', output, input], { stdio: 'inherit' })
+				console.log(`Saved to ${output}.`)
 			}
 		}
 	}, 'Search package from winget and install')
