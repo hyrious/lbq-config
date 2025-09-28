@@ -7,7 +7,7 @@ import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 
 import spawn from 'nano-spawn';
-import { anchor, hostname, RegisterFunction, tryUnescape } from './lib/base';
+import { anchor, hostname, RegisterFunction, showTable, TableCell, tryUnescape } from './lib/base';
 import { taze } from './lib/taze';
 
 export default function install(register: RegisterFunction) {
@@ -66,18 +66,24 @@ export default function install(register: RegisterFunction) {
 		const s = new Spinner('Running taze...')
 		s.start()
 		const changes = await taze(args.includes('-g'))
+		s.succeed()
 		if (changes.length == 0) {
 			console.log('No updates.')
 			return
 		}
 		console.log()
-		const maxLen = changes.reduce((max, c) => Math.max(max, c.name.length), 0)
-		changes.forEach(change => {
-			let name = change.name
-			let now = change.from.replace(/^[^\d]+/, '')
-			let then = change.to.replace(/^[^\d]+/, '')
-			let display = [now, win32 ? '→ ' : '→', then].join(' ')
-			console.log(`  ${name.padEnd(maxLen)}  ${change.compareUrl ? anchor(display, change.compareUrl) : display} ${anchor('diff', change.diffUrl)}`)
+		showTable(table => {
+			changes.forEach(change => {
+				let name = change.name
+				let now = change.from.replace(/^[^\d]+/, '')
+				let then = change.to.replace(/^[^\d]+/, '')
+				let display = [now, win32 ? '->' : '→', then].join(' ')
+				table.push([
+					{ label: name, link: `https://hyrious.me/npm-browser/?q=${name}` },
+					change.compareUrl ? { label: display, link: change.compareUrl } : display,
+					{ label: 'diff', link: change.diffUrl }
+				])
+			})
 		})
 		console.log()
 	}, 'Show package updates and url to the diff page')

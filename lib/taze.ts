@@ -1,4 +1,5 @@
 import spawn from 'nano-spawn'
+import { cleanVersion } from './base';
 
 export interface TazeOutputEntry {
 	readonly name: string
@@ -58,7 +59,7 @@ export async function taze(checkGlobal?: boolean): Promise<readonly TazeOutputEn
 			name: a.name,
 			from: a.currentVersion,
 			to: a.targetVersion,
-			diffUrl: `https://hyrious.me/npm-diff/?a=${a.name}@${a.currentVersion}&b=${a.name}@${a.targetVersion}`,
+			diffUrl: `https://hyrious.me/npm-diff/?a=${a.name}@${cleanVersion(a.currentVersion)}&b=${a.name}@${cleanVersion(a.targetVersion)}`,
 			compareUrl: compares[i]?.output.trim()
 		})
 	}
