@@ -204,4 +204,17 @@ export default function install(register: RegisterFunction) {
 			}
 		}
 	}, 'Search package from winget and install')
+
+	register('commit', async () => {
+		const { text, isCancel } = await import('@clack/prompts')
+		const message = await text({ message: 'Commit message:' })
+		if (message && !isCancel(message)) {
+			const { uniqueNamesGenerator, adjectives, animals } = await import('@joaomoreno/unique-names-generator')
+			const dictionaries = [adjectives, animals]
+			const branchName = uniqueNamesGenerator({ dictionaries, length: dictionaries.length, separator: '-' })
+			await spawn('git', ['switch', '-C', branchName], { stdio: 'inherit' })
+			await spawn('git', ['add', '.'], { stdio: 'inherit' })
+			await spawn('git', ['commit', '-m', message], { stdio: 'inherit' })
+		}
+	}, 'Prompt for message, switch to a new branch, then commit')
 }

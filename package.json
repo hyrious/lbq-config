@@ -2,6 +2,7 @@
   "dependencies": {
     "@clack/prompts": "^0.11.0",
     "@hyrious/lbq": "^0.2.0",
+    "@joaomoreno/unique-names-generator": "^5.2.0",
     "clean-stack": "^5.3.0",
     "nano-spawn": "^1.0.2",
     "tar": "^7.4.3",

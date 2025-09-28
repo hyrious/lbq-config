@@ -16,6 +16,9 @@ importers:
       '@hyrious/lbq':
         specifier: ^0.2.0
         version: 0.2.0
+      '@joaomoreno/unique-names-generator':
+        specifier: ^5.2.0
+        version: 5.2.0
       clean-stack:
         specifier: ^5.3.0
         version: 5.3.0
@@ -58,6 +61,10 @@ packages:
   '@isaacs/fs-minipass@4.0.1':
     resolution: {integrity: sha512-wgm9Ehl2jpeqP3zw/7mo3kRHFp5MEDhqAdwy1fTGkHAwnkGOVsgpvQhL8B5n1qlb01jV3n/bI0ZfZp5lWA1k4w==}
     engines: {node: '>=18.0.0'}
+
+  '@joaomoreno/unique-names-generator@5.2.0':
+    resolution: {integrity: sha512-JEh3qZ85Z6syFvQlhRGRyTPI1M5VticiiP8Xl8EV0XfyfI4Mwzd6Zw28BBrEgUJCYv/cpKCQClVj3J8Tn0KFiA==}
+    engines: {node: '>=8'}
 
   '@quansync/fs@0.1.5':
     resolution: {integrity: sha512-lNS9hL2aS2NZgNW7BBj+6EBl4rOf8l+tQ0eRY6JWCI8jI2kc53gSoqbjojU0OnAWhzoXiOjFyGsHcDGePB3lhA==}
@@ -252,6 +259,8 @@ snapshots:
   '@isaacs/fs-minipass@4.0.1':
     dependencies:
       minipass: 7.1.2
+
+  '@joaomoreno/unique-names-generator@5.2.0': {}
 
   '@quansync/fs@0.1.5':
     dependencies:
