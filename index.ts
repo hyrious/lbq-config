@@ -2,12 +2,13 @@
 
 import { homedir } from 'node:os';
 import { existsSync, mkdirSync } from 'node:fs';
-import { basename, dirname, extname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 
 import spawn from 'nano-spawn';
-import { hostname, RegisterFunction, tryUnescape } from './lib/base';
+import { anchor, hostname, RegisterFunction, tryUnescape } from './lib/base';
+import { taze } from './lib/taze';
 
 export default function install(register: RegisterFunction) {
 	const win32 = process.platform == 'win32'
@@ -61,65 +62,24 @@ export default function install(register: RegisterFunction) {
 	}, 'Run git pull in ' + import.meta.dirname)
 
 	register('taze', async (_, ...args) => {
-		const { CheckPackages, resolvePackage } = await import('taze')
-		if (args.includes('-g')) {
-			const stdout = (await spawn('npm', ['ls', '--global', '--depth=0', '--json'])).output.trim()
-			const json = JSON.parse(stdout) as { dependencies: { [x: string]: { version: string } | undefined } }
-			const pkgs = Object.entries(json.dependencies).filter(a => a[1]?.version)
-			const pkg: import('taze').PackageMeta = {
-				agent: 'npm',
-				private: true,
-				type: 'global',
-				resolved: [],
-				raw: null,
-				version: '',
-				filepath: '',
-				relative: '',
-				deps: pkgs.map(([name, i]) => ({
-					name,
-					currentVersion: `^${i?.version}`,
-					update: true,
-					source: 'dependencies'
-				})),
-				name: 'npm (global)'
-			}
-			await resolvePackage(pkg, {
-				mode: 'latest',
-				loglevel: 'error',
-				maturityPeriod: 2,
-				includeLocked: true
-			}, () => true)
-			show(pkg.resolved.filter(i => i.update))
-		} else {
-			await CheckPackages({
-				mode: 'latest',
-				loglevel: 'error',
-				maturityPeriod: 2,
-				includeLocked: true
-			}, {
-				afterPackageEnd(pkg) {
-					show(pkg.resolved.filter(i => i.update))
-				}
-			})
+		const { Spinner } = await import('picospinner')
+		const s = new Spinner('Running taze...')
+		s.start()
+		const changes = await taze(args.includes('-g'))
+		if (changes.length == 0) {
+			console.log('No updates.')
+			return
 		}
-		function show(changes: import('taze').ResolvedDepChange[]) {
-			if (changes.length == 0) {
-				console.log('No updates.')
-				return
-			}
-			console.log()
-			let maxLen = changes.reduce((max, c) => Math.max(max, c.name.length), 0)
-			changes.forEach(change => {
-				let name = change.name
-				let now = change.currentVersion.replace(/^[^\d]+/, '')
-				let then = change.targetVersion.replace(/^[^\d]+/, '')
-				let a = `${name}@${now}`, b = `${name}@${then}`
-				let link = [now, win32 ? '→ ' : '→', then].join(' ')
-				let url = `https://hyrious.me/npm-diff/?a=${a}&b=${b}`
-				console.log(`  ${name.padEnd(maxLen)}  \x1b]8;;${url}\x07${link}\x1b]8;;\x07`)
-			})
-			console.log()
-		}
+		console.log()
+		const maxLen = changes.reduce((max, c) => Math.max(max, c.name.length), 0)
+		changes.forEach(change => {
+			let name = change.name
+			let now = change.from.replace(/^[^\d]+/, '')
+			let then = change.to.replace(/^[^\d]+/, '')
+			let display = [now, win32 ? '→ ' : '→', then].join(' ')
+			console.log(`  ${name.padEnd(maxLen)}  ${change.compareUrl ? anchor(display, change.compareUrl) : display} ${anchor('diff', change.diffUrl)}`)
+		})
+		console.log()
 	}, 'Show package updates and url to the diff page')
 
 	if (win32) register('nodejs', async () => {

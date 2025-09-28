@@ -20,3 +20,7 @@ export function hostname(str: string): string {
 	try { return (new URL(str)).hostname }
 	catch { return str.split('/')[0] || str }
 }
+
+export function anchor(text: string, href: string): string {
+	return `\x1b]8;;${href}\x07${text}\x1b]8;;\x07`
+}
