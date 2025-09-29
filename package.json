@@ -7,7 +7,8 @@
     "nano-spawn": "^1.0.2",
     "picospinner": "^3.0.0",
     "tar": "^7.4.3",
-    "taze": "^19.6.0"
+    "taze": "^19.6.0",
+    "yauzl": "^3.2.0"
   },
   "devDependencies": {
     "@hyrious/configs": "^0.1.4",

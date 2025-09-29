@@ -1,7 +1,7 @@
 /// <reference types="node" />
 
-import { homedir } from 'node:os';
-import { existsSync, mkdirSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
+import { existsSync, mkdirSync, renameSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -10,6 +10,7 @@ import { spawnSync } from 'node:child_process';
 import spawn from 'nano-spawn';
 import { hostname, RegisterFunction, showTable, tryUnescape } from './lib/base';
 import { taze } from './lib/taze';
+import { download, unzip } from './lib/download';
 
 export default function install(register: RegisterFunction) {
 	const win32 = process.platform == 'win32'
@@ -189,4 +190,34 @@ export default function install(register: RegisterFunction) {
 			await spawn('git', ['commit', '-m', message], { stdio: 'inherit' })
 		}
 	}, 'Prompt for message, switch to a new branch, then commit')
+
+	register('bun', async () => {
+		interface IBinaryEntry {
+			readonly name: string
+			readonly date: string
+			readonly url: string
+		}
+		let data: IBinaryEntry[] = await fetch('https://registry.npmmirror.com/-/binary/bun').then(r => r.json())
+		let maxDate = '', url = ''
+		for (const entry of data) {
+			if (entry.name.includes('-v') && maxDate < entry.date) {
+				maxDate = entry.date
+				url = entry.url
+			}
+		}
+		data = await fetch(url).then(r => r.json())
+		let hint = macOS ? 'darwin-aarch64.zip' : 'windows-x64.zip'
+		let entry = data.find(e => e.name.includes(hint))!
+		console.log('.', entry.url)
+		let zipfile = await download(entry.url, join(homedir(), 'Downloads'))
+		let outdir = tmpdir()
+		await unzip(zipfile, outdir)
+		let outfile = join(outdir, macOS ? 'bun-darwin-aarch64' : 'bun-windows-x64', win32 ? 'bun.exe' : 'bun')
+		if (existsSync(outfile)) {
+			renameSync(outfile, join(homedir(), '.bun', 'bin', win32 ? 'bun.exe' : 'bun'))
+			console.log('Done.')
+		} else {
+			console.error('Not found', outfile)
+		}
+	}, 'Upgrade bun')
 }
