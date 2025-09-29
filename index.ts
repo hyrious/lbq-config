@@ -5,14 +5,20 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
+import { spawnSync } from 'node:child_process';
 
 import spawn from 'nano-spawn';
-import { anchor, hostname, RegisterFunction, showTable, TableCell, tryUnescape } from './lib/base';
+import { hostname, RegisterFunction, showTable, tryUnescape } from './lib/base';
 import { taze } from './lib/taze';
 
 export default function install(register: RegisterFunction) {
 	const win32 = process.platform == 'win32'
+	const macOS = process.platform == 'darwin'
 	const mirror = 'https://mirrors.tuna.tsinghua.edu.cn'
+
+	register('edit', () => {
+		spawnSync('subl', ['.'], { cwd: import.meta.dirname, stdio: 'inherit' })
+	}, 'Edit ' + import.meta.dirname)
 
 	register('iosevka', async () => {
 		const table = await Promise.all(['Iosevka', 'Sarasa-Gothic'].map(async name => {
@@ -151,10 +157,10 @@ export default function install(register: RegisterFunction) {
 		if (input.startsWith('https://github.com')) {
 			const [_, user, repo, ...rest] = new URL(input).pathname.split('/')
 			const last = rest.pop()!
-			const mirror = `https://mirrors.tuna.tsinghua.edu.cn/github-release/${user}/${repo}/LatestRelease/${last}`
-			const response = await fetch(mirror, { method: 'HEAD' }).catch(() => [] as unknown as Response)
+			const mirrorUrl = `${mirror}/github-release/${user}/${repo}/LatestRelease/${last}`
+			const response = await fetch(mirrorUrl, { method: 'HEAD' }).catch(() => [] as unknown as Response)
 			if (response.ok) {
-				input = mirror
+				input = mirrorUrl
 			}
 		}
 		const { confirm } = await import('@clack/prompts')
