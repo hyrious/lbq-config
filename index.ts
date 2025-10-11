@@ -220,4 +220,9 @@ export default function install(register: RegisterFunction) {
 			console.error('Not found', outfile)
 		}
 	}, 'Upgrade bun')
+
+	if (macOS) register('dock', async () => {
+		const { runJxa } = await import('run-jxa')
+		await runJxa(`Application('iTerm2').windows[0].bounds = { x: 2048 - 710, y: 1152 - 455, width: 710, height: 455 }`)
+	}, 'Move iTerm2.app to bottom right corner of the screen')
 }
