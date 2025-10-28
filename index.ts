@@ -101,6 +101,12 @@ export default function install(register: RegisterFunction) {
 		console.log(info.url)
 	}, 'Get latest nodejs download url')
 
+	register('nodejs-lts', async () => {
+		let data = await fetch('https://nodejs.org/dist/index.json').then(r => r.json())
+		let info = data.find((e: { lts: string | false }) => e.lts)
+		console.log(info.version)
+	}, 'Get the LTS version of Node.js')
+
 	register('private', async (_, ...args) => {
 		const { defineConfig } = await import('@hyrious/lbq')
 		const { default: fn } = await import('./private/index')
