@@ -1,4 +1,4 @@
 node_modules
 dist
 private/*
-!private/index.example.ts
+!private/*.example.*

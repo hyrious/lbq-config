@@ -5,7 +5,6 @@ import { existsSync, mkdirSync, renameSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import { spawnSync } from 'node:child_process';
 
 import spawn from 'nano-spawn';
 import { hostname, RegisterFunction, showTable, tryUnescape } from './lib/base';
@@ -16,10 +15,6 @@ export default function install(register: RegisterFunction) {
 	const win32 = process.platform == 'win32'
 	const macOS = process.platform == 'darwin'
 	const mirror = 'https://mirrors.tuna.tsinghua.edu.cn'
-
-	register('edit', () => {
-		spawnSync('subl', ['.'], { cwd: import.meta.dirname, stdio: 'inherit' })
-	}, 'Edit ' + import.meta.dirname)
 
 	register('iosevka', async () => {
 		const table = await Promise.all(['Iosevka', 'Sarasa-Gothic'].map(async name => {
@@ -231,4 +226,56 @@ export default function install(register: RegisterFunction) {
 		const { runJxa } = await import('run-jxa')
 		await runJxa(`Application('iTerm2').windows[0].bounds = { x: 2048 - 710, y: 1152 - 455, width: 710, height: 455 }`)
 	}, 'Move iTerm2.app to bottom right corner of the screen')
+
+	register('llm', async (_, content) => {
+		if (!content) {
+			console.log('Usage: llm "3.9 and 3.11 which is bigger"')
+			return
+		}
+
+		const { parseServerSentEvents } = await import('parse-sse')
+		const config = await import('./private/llm.json', { with: { type: 'json' }})
+
+		let baseUrl = config.baseUrl
+		if (baseUrl.endsWith('/')) {
+			baseUrl = baseUrl.slice(0, -1)
+		}
+		if (baseUrl.endsWith('/v1')) {
+			baseUrl = baseUrl.slice(0, -3)
+		}
+
+		// Currently there's less support for /v1/responses in the wild
+		const response = await fetch(baseUrl + '/v1/chat/completions', {
+			method: 'POST',
+			headers: {
+				'Authorization': 'Bearer ' + config.apiKey,
+				'Content-Type': 'application/json',
+			},
+			body: JSON.stringify({
+				model: config.model,
+				messages: [
+					{
+						role: 'user',
+						content: content,
+					},
+				],
+				stream: true
+			}),
+		})
+
+		for await (const event of parseServerSentEvents(response)) {
+			if (event.data === '[DONE]') break
+
+			const { choices: [item], usage } = JSON.parse(event.data)
+			if (item.finish_reason === 'stop') break
+
+			if (item.delta.content) {
+				process.stdout.write(item.delta.content)
+			}
+
+			if (usage) {
+				console.log(`\nUsed ${usage.total_tokens} tokens (${usage.prompt_tokens} + ${usage.completion_tokens})`)
+			}
+		}
+	}, 'Mini LLM client')
 }
