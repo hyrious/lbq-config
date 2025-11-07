@@ -4,6 +4,7 @@
     "@hyrious/lbq": "^0.2.1",
     "@joaomoreno/unique-names-generator": "^5.2.0",
     "clean-stack": "^6.0.0",
+    "dayjs": "^1.11.19",
     "nano-spawn": "^2.0.0",
     "parse-sse": "^0.1.0",
     "picospinner": "^3.0.0",

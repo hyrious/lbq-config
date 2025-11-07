@@ -1,7 +1,7 @@
 /// <reference types="node" />
 
 import { homedir, tmpdir } from 'node:os';
-import { existsSync, mkdirSync, renameSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readdirSync, renameSync, unlinkSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -263,19 +263,30 @@ export default function install(register: RegisterFunction) {
 			}),
 		})
 
+		const { default: dayjs } = await import('dayjs')
+		const logFile = join(import.meta.dirname, 'private', `llm-${dayjs().unix()}.log`)
 		for await (const event of parseServerSentEvents(response)) {
 			if (event.data === '[DONE]') break
 
+			appendFileSync(logFile, event.data + '\n')
+
 			const { choices: [item], usage } = JSON.parse(event.data)
-			if (item.finish_reason === 'stop') break
 
 			if (item.delta.content) {
 				process.stdout.write(item.delta.content)
 			}
 
-			if (usage) {
-				console.log(`\nUsed ${usage.total_tokens} tokens (${usage.prompt_tokens} + ${usage.completion_tokens})`)
+			if (item.finish_reason === 'stop') {
+				if (usage) {
+					console.log(`\n\x1B[2mUsed ${usage.total_tokens} tokens (${usage.prompt_tokens} + ${usage.completion_tokens})\x1B[m`)
+				}
+				break
 			}
+		}
+
+		const logFiles = readdirSync(join(import.meta.dirname, 'private')).filter(f => f.startsWith('llm-') && f.endsWith('.log'))
+		if (logFiles.length > 5) {
+			logFiles.sort().slice(0, logFiles.length - 5).forEach(f => unlinkSync(join(import.meta.dirname, 'private', f)))
 		}
 	}, 'Mini LLM client')
 }
