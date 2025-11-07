@@ -265,23 +265,29 @@ export default function install(register: RegisterFunction) {
 
 		const { default: dayjs } = await import('dayjs')
 		const logFile = join(import.meta.dirname, 'private', `llm-${dayjs().unix()}.log`)
+
+		let finalUsage: any
 		for await (const event of parseServerSentEvents(response)) {
 			if (event.data === '[DONE]') break
 
 			appendFileSync(logFile, event.data + '\n')
 
 			const { choices: [item], usage } = JSON.parse(event.data)
+			if (usage) {
+				finalUsage = usage
+			}
 
 			if (item.delta.content) {
 				process.stdout.write(item.delta.content)
 			}
 
 			if (item.finish_reason === 'stop') {
-				if (usage) {
-					console.log(`\n\x1B[2mUsed ${usage.total_tokens} tokens (${usage.prompt_tokens} + ${usage.completion_tokens})\x1B[m`)
-				}
 				break
 			}
+		}
+
+		if (finalUsage) {
+			console.log(`\n\x1B[2m// Used ${finalUsage.total_tokens} tokens (${finalUsage.prompt_tokens} + ${finalUsage.completion_tokens})\x1B[m`)
 		}
 
 		const logFiles = readdirSync(join(import.meta.dirname, 'private')).filter(f => f.startsWith('llm-') && f.endsWith('.log'))
