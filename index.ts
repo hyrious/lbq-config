@@ -5,6 +5,8 @@ import { appendFileSync, existsSync, mkdirSync, readdirSync, renameSync, unlinkS
 import { basename, dirname, join } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
+import { spawnSync } from 'node:child_process';
+import { setTimeout } from 'node:timers/promises';
 
 import spawn from 'nano-spawn';
 import { hostname, RegisterFunction, showTable, tryUnescape } from './lib/base';
@@ -227,6 +229,12 @@ export default function install(register: RegisterFunction) {
 		await runJxa(`Application('iTerm2').windows[0].bounds = { x: 2048 - 710, y: 1152 - 455, width: 710, height: 455 }`)
 	}, 'Move iTerm2.app to bottom right corner of the screen')
 
+	if (macOS) register('restart', async (_, input) => {
+		spawnSync('osascript', ['-e', `quit app ${JSON.stringify(input)}`], { stdio: 'inherit' });
+		await setTimeout(1500)
+		spawnSync('osascript', ['-e', `tell app ${JSON.stringify(input)} to launch`], { stdio: 'inherit' });
+	}, 'Restart app')
+
 	register('llm', async (_, content) => {
 		if (!content) {
 			console.log('Usage: llm "3.9 and 3.11 which is bigger"')
@@ -287,7 +295,7 @@ export default function install(register: RegisterFunction) {
 		}
 
 		if (finalUsage) {
-			console.log(`\n\x1B[2m// Used ${finalUsage.total_tokens} tokens (${finalUsage.prompt_tokens} + ${finalUsage.completion_tokens})\x1B[m`)
+			console.log(`\n\x1B[2m// Used ${finalUsage.total_tokens} (${finalUsage.prompt_tokens} + ${finalUsage.completion_tokens}) tokens\x1B[m`)
 		}
 
 		const logFiles = readdirSync(join(import.meta.dirname, 'private')).filter(f => f.startsWith('llm-') && f.endsWith('.log'))
