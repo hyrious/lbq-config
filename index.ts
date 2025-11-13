@@ -270,6 +270,9 @@ export default function install(register: RegisterFunction) {
 				stream: true
 			}),
 		})
+		if (!response.ok) {
+			throw new Error(await response.text())
+		}
 
 		const { default: dayjs } = await import('dayjs')
 		const logFile = join(import.meta.dirname, 'private', `llm-${dayjs().unix()}.log`)
