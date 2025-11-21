@@ -255,25 +255,43 @@ export default function install(register: RegisterFunction) {
 		spawnSync('osascript', ['-e', `tell app ${JSON.stringify(input)} to launch`], { stdio: 'inherit' });
 	}, 'Restart app')
 
-	register('llm', async (_, content) => {
+	register('llm', async (_, ...args) => {
+		let content = ''
+		let model = ''
+		for (const arg of args) {
+			if (arg.startsWith('-m=') || arg.startsWith('--model=')) {
+				model = arg.slice(arg.indexOf('=') + 1)
+			} else {
+				if (content) content += ' '
+				content += arg
+			}
+		}
+
 		if (!content) {
 			console.log('Usage: llm "3.9 and 3.11 which is bigger"')
 			return
 		}
 
 		const { parseServerSentEvents } = await import('parse-sse')
-		const config = await import('./private/llm.json', { with: { type: 'json' } })
+		const configs = await import('./private/llm.json', { with: { type: 'json' } }).then(mod => mod.default) as unknown as {
+			[m: string]: { baseUrl: string, apiKey: string, model: string }
+		}
+		const config = model ? configs[model] : Object.values(configs)[0]
+		if (!config) {
+			console.log(`Not found model '${model}', expect ${Object.keys(configs).join(' or ')}`)
+			return
+		}
 
 		let baseUrl = config.baseUrl
 		if (baseUrl.endsWith('/')) {
 			baseUrl = baseUrl.slice(0, -1)
 		}
-		if (baseUrl.endsWith('/v1')) {
-			baseUrl = baseUrl.slice(0, -3)
+		if (!/\/v\d$/.test(baseUrl)) {
+			baseUrl += '/v1'
 		}
 
 		// Currently there's less support for /v1/responses in the wild
-		const response = await fetch(baseUrl + '/v1/chat/completions', {
+		const response = await fetch(baseUrl + '/chat/completions', {
 			method: 'POST',
 			headers: {
 				'Authorization': 'Bearer ' + config.apiKey,
@@ -297,6 +315,7 @@ export default function install(register: RegisterFunction) {
 		const { default: dayjs } = await import('dayjs')
 		const logFile = join(import.meta.dirname, 'private', `llm-${dayjs().unix()}.log`)
 
+		let thinking = false
 		let finalUsage: any
 		for await (const event of parseServerSentEvents(response)) {
 			if (event.data === '[DONE]') break
@@ -308,7 +327,19 @@ export default function install(register: RegisterFunction) {
 				finalUsage = usage
 			}
 
+			if (item.delta.reasoning_content) {
+				if (!thinking) {
+					thinking = true
+					process.stdout.write('\x1B[2m')
+				}
+				process.stdout.write(item.delta.reasoning_content)
+			}
+
 			if (item.delta.content) {
+				if (thinking) {
+					thinking = false
+					process.stdout.write('\x1B[m\n\n')
+				}
 				process.stdout.write(item.delta.content)
 			}
 

@@ -1,5 +1,7 @@
 {
-	"baseUrl": "",
-	"apiKey": "",
-	"model": ""
+	"name": {
+		"baseUrl": "",
+		"apiKey": "",
+		"model": ""
+	}
 }
