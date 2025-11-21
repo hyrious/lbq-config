@@ -112,10 +112,14 @@ export default function install(register: RegisterFunction) {
 		console.log()
 	}, 'Show package updates and url to the diff page')
 
-	if (win32) register('nodejs', async () => {
+	if (win32) register('nodejs', async (_, ...args) => {
 		let data = await fetch('https://registry.npmmirror.com/-/binary/node/latest/').then(r => r.json())
 		let info = data.findLast((e: { name: string }) => e.name.endsWith('-x64.msi'))
 		console.log(info.url)
+		if (args.includes('-i') || args.includes('--install')) {
+			let file = await download(info.url, join(homedir(), 'Downloads'))
+			await spawn('msiexec', ['/i', file], { stdio: 'inherit' })
+		}
 	}, 'Get latest nodejs download url')
 
 	register('nodejs-lts', async () => {
