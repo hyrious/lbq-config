@@ -43,6 +43,9 @@ importers:
       taze:
         specifier: ^19.9.0
         version: 19.9.0
+      undici:
+        specifier: ^7.16.0
+        version: 7.16.0
       yauzl:
         specifier: ^3.2.0
         version: 3.2.0
@@ -343,6 +346,10 @@ packages:
   undici-types@7.16.0:
     resolution: {integrity: sha512-Zz+aZWSj8LE6zoxD+xrjh4VfkIG8Ya6LvYkZqtUQGJPZjYl53ypCaUwWqo7eI0x66KBGeRo+mlBEkMSeSZ38Nw==}
 
+  undici@7.16.0:
+    resolution: {integrity: sha512-QEg3HPMll0o3t2ourKwOeUAZ159Kn9mx5pnzHRQO8+Wixmh88YdZRiIwat0iNzNNXn0yoEtXJqFpyW7eM8BV7g==}
+    engines: {node: '>=20.18.1'}
+
   unicorn-magic@0.3.0:
     resolution: {integrity: sha512-+QBBXBCvifc56fsbuxZQ6Sic3wqqc3WWaqxs58gvJrcOuN83HGTCwz3oS5phzU9LthRNE9VrJCFCLUgHeeFnfA==}
     engines: {node: '>=18'}
@@ -641,6 +648,8 @@ snapshots:
       quansync: 0.2.11
 
   undici-types@7.16.0: {}
+
+  undici@7.16.0: {}
 
   unicorn-magic@0.3.0: {}
 

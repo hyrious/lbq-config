@@ -286,16 +286,15 @@ export default function install(register: RegisterFunction) {
 			return
 		}
 
-		let baseUrl = config.baseUrl
-		if (baseUrl.endsWith('/')) {
-			baseUrl = baseUrl.slice(0, -1)
-		}
-		if (!/\/v\d$/.test(baseUrl)) {
-			baseUrl += '/v1'
+		const { fetch, EnvHttpProxyAgent } = await import('undici')
+		const dispatcher = config.model.includes('gemini') ? new EnvHttpProxyAgent() : undefined
+		if (dispatcher && !process.env.http_proxy) {
+			console.log('Proxy env not set')
+			return
 		}
 
-		// Currently there's less support for /v1/responses in the wild
-		const response = await fetch(baseUrl + '/chat/completions', {
+		// baseUrl should be compatible with /chat/completions
+		const response = await fetch(config.baseUrl, {
 			method: 'POST',
 			headers: {
 				'Authorization': 'Bearer ' + config.apiKey,
@@ -311,6 +310,7 @@ export default function install(register: RegisterFunction) {
 				],
 				stream: true
 			}),
+			dispatcher,
 		})
 		if (!response.ok) {
 			throw new Error(await response.text())
@@ -321,7 +321,7 @@ export default function install(register: RegisterFunction) {
 
 		let thinking = false
 		let finalUsage: any
-		for await (const event of parseServerSentEvents(response)) {
+		for await (const event of parseServerSentEvents(response as unknown as Response)) {
 			if (event.data === '[DONE]') break
 
 			appendFileSync(logFile, event.data + '\n')
