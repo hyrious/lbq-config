@@ -1,12 +1,13 @@
 /// <reference types="node" />
 
 import { homedir, tmpdir } from 'node:os';
-import { appendFileSync, existsSync, mkdirSync, readdirSync, renameSync, unlinkSync } from 'node:fs';
+import { appendFileSync, createReadStream, existsSync, mkdirSync, readdirSync, renameSync, unlinkSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { spawnSync } from 'node:child_process';
 import { setTimeout } from 'node:timers/promises';
+import { createHash } from 'node:crypto';
 
 import spawn from 'nano-spawn';
 import { hostname, RegisterFunction, showTable, tryUnescape } from './lib/base';
@@ -18,18 +19,37 @@ export default function install(register: RegisterFunction) {
 	const macOS = process.platform == 'darwin'
 	const mirror = 'https://mirrors.tuna.tsinghua.edu.cn'
 
-	register('iosevka', async () => {
+	register('iosevka', async (_, ...args) => {
 		const table = await Promise.all(['Iosevka', 'Sarasa-Gothic'].map(async name => {
 			let hashfile = `${mirror}/github-release/be5invis/${name}/LatestRelease/SHA-256.txt`
 			let content = await fetch(hashfile).then(r => r.text())
 			let line = content.split('\n').find(e => e.includes('SuperTTC'))!
-			let fileName = line.split(/\s+/)[1]
+			let [hash, fileName] = line.split(/\s+/)
 			let url = dirname(hashfile) + '/' + fileName
-			return [name, url]
+			return [name, hash, url]
 		}))
-		const maxLen = table.reduce((max, a) => Math.max(max, a[0].length), 0)
-		for (const row of table) {
-			console.log(row[0].padEnd(maxLen), row[1])
+		showTable(table.map(row => [row[0], row[2]]))
+		if (macOS && (args.includes('-i') || args.includes('--install'))) {
+			for (const [name, hash, url] of table) {
+				console.log('.', url)
+				const file = await download(url, join(homedir(), 'Downloads'))
+				const token = createHash('sha256')
+				await pipeline(createReadStream(file), token, { end: true })
+				const digest = token.digest('hex')
+				if (digest !== hash) {
+					console.error(`Hash mismatch for ${file}: expected ${hash}, got ${digest}`)
+					continue
+				}
+				const fontsDir = join(homedir(), 'Library', 'Fonts')
+				if (url.endsWith('.zip')) {
+					const outdir = join(tmpdir(), name)
+					await unzip(file, outdir)
+					renameSync(join(outdir, 'Iosevka.ttc'), join(fontsDir, 'Iosevka.ttc'))
+				} else if (url.endsWith('.7z')) {
+					await spawn('7z', ['x', '-o' + fontsDir, file], { stdio: 'inherit' })
+				}
+				console.log(`Installed fonts to ${fontsDir}`)
+			}
 		}
 	}, 'Print URL to the latest Iosevka & Sarasa')
 
@@ -242,7 +262,7 @@ export default function install(register: RegisterFunction) {
 		}
 
 		const { parseServerSentEvents } = await import('parse-sse')
-		const config = await import('./private/llm.json', { with: { type: 'json' }})
+		const config = await import('./private/llm.json', { with: { type: 'json' } })
 
 		let baseUrl = config.baseUrl
 		if (baseUrl.endsWith('/')) {
