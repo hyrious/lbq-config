@@ -128,7 +128,7 @@ export default function install(register: RegisterFunction) {
 		console.log(info.version)
 	}, 'Get the LTS version of Node.js')
 
-	register('private', async (_, ...args) => {
+	register(/^(p|pri|priv|private)$/, async (_, ...args) => {
 		const { defineConfig } = await import('@hyrious/lbq')
 		const { default: fn } = await import('./private/index')
 		const lbq = await defineConfig(fn)

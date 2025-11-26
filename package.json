@@ -6,6 +6,7 @@
     "clean-stack": "^6.0.0",
     "dayjs": "^1.11.19",
     "nano-spawn": "^2.0.0",
+    "parse-duration-ms": "^0.1.0",
     "parse-sse": "^0.1.0",
     "picospinner": "^3.0.0",
     "run-jxa": "^4.0.0",

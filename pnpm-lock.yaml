@@ -28,6 +28,9 @@ importers:
       nano-spawn:
         specifier: ^2.0.0
         version: 2.0.0
+      parse-duration-ms:
+        specifier: ^0.1.0
+        version: 0.1.0
       parse-sse:
         specifier: ^0.1.0
         version: 0.1.0
@@ -229,6 +232,10 @@ packages:
 
   package-manager-detector@1.5.0:
     resolution: {integrity: sha512-uBj69dVlYe/+wxj8JOpr97XfsxH/eumMt6HqjNTmJDf/6NO9s+0uxeOneIz3AsPt2m6y9PqzDzd3ATcU17MNfw==}
+
+  parse-duration-ms@0.1.0:
+    resolution: {integrity: sha512-6yvHGGtBLcxF7pXLOxDOSCD8hnAycp1uiS+4vJ2x5O01wxC0mbEg5Zyc1Ru/+Sj5He/D+IwvQTFQ1SuJ/yAL0g==}
+    engines: {node: '>=20'}
 
   parse-ms@4.0.0:
     resolution: {integrity: sha512-TXfryirbmq34y8QBwgqCVLi+8oA3oWx2eAnSn62ITyEhEYaWRlVZ2DvMM9eZbMs/RfxPu/PK/aBLyGj4IrqMHw==}
@@ -540,6 +547,8 @@ snapshots:
       mimic-function: 5.0.1
 
   package-manager-detector@1.5.0: {}
+
+  parse-duration-ms@0.1.0: {}
 
   parse-ms@4.0.0: {}
 
