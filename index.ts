@@ -13,6 +13,7 @@ import spawn from 'nano-spawn';
 import { hostname, RegisterFunction, showTable, tryUnescape } from './lib/base';
 import { taze } from './lib/taze';
 import { download, unzip } from './lib/download';
+import { scanBrokenNodeModules } from './lib/scanNodeModules';
 
 export default function install(register: RegisterFunction) {
 	const win32 = process.platform == 'win32'
@@ -369,27 +370,11 @@ export default function install(register: RegisterFunction) {
 		}
 
 		const dryRun = args.includes('-c') || args.includes('--dry-run')
-		const handle = (folder: string) => {
-			console.log('-', folder)
-			if (dryRun) return;
-			rmSync(join('node_modules', folder), { recursive: true, force: true })
-		}
-
-		const items = readdirSync('node_modules', { withFileTypes: true })
-		const names = items.map(e => e.name)
-		let tmp: string | undefined
-		for (const dir of items) {
-			if (dir.name[0] == '@' && dir.isDirectory()) {
-				const items2 = readdirSync(join('node_modules', dir.name), { withFileTypes: true })
-				const names2 = items2.map(e => e.name)
-				for (const dir2 of items2) {
-					if (dir2.name[0] != '.' && dir2.isDirectory() && (tmp = names2.find(e => e.startsWith(`.${dir2.name}-`)))) {
-						handle(join(dir.name, tmp))
-					}
-				}
-			} else if (dir.name[0] != '.' && dir.isDirectory() && (tmp = names.find(e => e.startsWith(`.${dir.name}-`)))) {
-				handle(tmp)
-			}
+		const items = scanBrokenNodeModules()
+		for (const { name, garbage } of items) {
+			console.log('-', name, garbage)
+			if (dryRun) continue;
+			rmSync(garbage, { recursive: true, force: true })
 		}
 	}, 'Delete node_modules/.pkg-hash files after a broken install')
 }
