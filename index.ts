@@ -261,6 +261,12 @@ export default function install(register: RegisterFunction) {
 	}, 'Restart app')
 
 	register('llm', async (_, ...args) => {
+		if (args.includes('-l') || args.includes('-m') || args.includes('--models')) {
+			const configs = await import('./private/llm.json', { with: { type: 'json' } }).then(mod => mod.default)
+			showTable(Object.keys(configs).map(key => [key, configs[key].model, configs[key].baseUrl]))
+			return
+		}
+
 		let content = ''
 		let model = ''
 		for (const arg of args) {
@@ -273,7 +279,7 @@ export default function install(register: RegisterFunction) {
 		}
 
 		if (!content) {
-			console.log('Usage: llm "3.9 and 3.11 which is bigger"')
+			console.log('Usage: llm [-m=model] "3.9 and 3.11 which is bigger"')
 			return
 		}
 
