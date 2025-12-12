@@ -10,10 +10,11 @@ import { setTimeout } from 'node:timers/promises';
 import { createHash } from 'node:crypto';
 
 import spawn from 'nano-spawn';
-import { hostname, RegisterFunction, showTable, tryUnescape } from './lib/base';
+import { getErrorMessage, hostname, RegisterFunction, showTable, tryUnescape } from './lib/base';
 import { taze } from './lib/taze';
 import { download, unzip } from './lib/download';
 import { scanBrokenNodeModules } from './lib/scanNodeModules';
+import { renderMarkdownStream } from './lib/renderMarkdownStream';
 
 export default function install(register: RegisterFunction) {
 	const win32 = process.platform == 'win32'
@@ -285,7 +286,7 @@ export default function install(register: RegisterFunction) {
 
 		const { parseServerSentEvents } = await import('parse-sse')
 		const configs = await import('./private/llm.json', { with: { type: 'json' } }).then(mod => mod.default) as unknown as {
-			[m: string]: { baseUrl: string, apiKey: string, model: string }
+			[m: string]: { baseUrl: string, apiKey: string, model: string; balance: string | { method?: string; url: string } }
 		}
 		const config = model ? configs[model] : Object.values(configs)[0]
 		if (!config) {
@@ -315,6 +316,8 @@ export default function install(register: RegisterFunction) {
 						content: content,
 					},
 				],
+				max_tokens: 2048,
+				temperature: 0.2,
 				stream: true
 			}),
 			dispatcher,
@@ -326,41 +329,61 @@ export default function install(register: RegisterFunction) {
 		const { default: dayjs } = await import('dayjs')
 		const logFile = join(import.meta.dirname, 'private', `llm-${dayjs().unix()}.log`)
 
-		let thinking = false
 		let finalUsage: any
-		for await (const event of parseServerSentEvents(response as unknown as Response)) {
-			if (event.data === '[DONE]') break
+		const stream: AsyncGenerator<string> = (async function* () {
+			for await (const event of parseServerSentEvents(response as unknown as Response)) {
+				if (event.data === '[DONE]') break
 
-			appendFileSync(logFile, event.data + '\n')
+				appendFileSync(logFile, event.data + '\n')
 
-			const { choices: [item], usage } = JSON.parse(event.data)
-			if (usage) {
-				finalUsage = usage
-			}
-
-			if (item.delta.reasoning_content) {
-				if (!thinking) {
-					thinking = true
-					process.stdout.write('\x1B[2m')
+				const { choices: [item], usage } = JSON.parse(event.data)
+				if (usage) {
+					finalUsage = usage
 				}
-				process.stdout.write(item.delta.reasoning_content)
-			}
 
-			if (item.delta.content) {
-				if (thinking) {
-					thinking = false
-					process.stdout.write('\x1B[m\n\n')
+				if (item.delta.reasoning_content) {
+					yield item.delta.reasoning_content
 				}
-				process.stdout.write(item.delta.content)
-			}
 
-			if (item.finish_reason === 'stop') {
-				break
+				if (item.delta.content) {
+					yield item.delta.content
+				}
+
+				if (item.finish_reason === 'stop') {
+					break
+				}
 			}
-		}
+		})();
+		await renderMarkdownStream(stream);
 
 		if (finalUsage) {
-			console.log(`\n\x1B[2m// Used ${finalUsage.total_tokens} (${finalUsage.prompt_tokens} + ${finalUsage.completion_tokens}) tokens\x1B[m`)
+			let extra = ''
+			if (config.balance) {
+				let method = 'GET'
+				let url: string
+				let headers: Record<string, string> = {
+					'Authorization': 'Bearer ' + config.apiKey,
+				}
+				if (typeof config.balance == 'string') {
+					url = config.balance
+				} else {
+					method = config.balance.method || method
+					url = config.balance.url
+					if (method == 'POST' || method == 'PUT') {
+						headers['Content-Type'] = 'application/json'
+					}
+				}
+				const response = await fetch(url, { method, headers })
+				if (response.ok) {
+					let data: any = await response.text()
+					if (data[0] == '{') data = JSON.parse(data);
+					extra = `, balance: ${getBalance(data)}`
+				} else {
+					const message = getErrorMessage(await response.text())
+					console.error(`\n\x1B[31mFailed to get balance: ${message}\x1B[m`)
+				}
+			}
+			console.log(`\n\x1B[2m// Used ${finalUsage.total_tokens} (${finalUsage.prompt_tokens} + ${finalUsage.completion_tokens}) tokens${extra}\x1B[m`)
 		}
 
 		const logFiles = readdirSync(join(import.meta.dirname, 'private')).filter(f => f.startsWith('llm-') && f.endsWith('.log'))
@@ -383,4 +406,13 @@ export default function install(register: RegisterFunction) {
 			rmSync(garbage, { recursive: true, force: true })
 		}
 	}, 'Delete node_modules/.pkg-hash files after a broken install')
+}
+
+function getBalance(data: any): string {
+	// DeepSeek
+	if (Array.isArray(data?.balance_infos)) {
+		return data.balance_infos.map(b => `${b.total_balance} ${b.currency}`).join(', ')
+	}
+	// No other for now
+	return data && typeof data == 'string' ? data : JSON.stringify(data)
 }

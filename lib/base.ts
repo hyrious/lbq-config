@@ -53,3 +53,15 @@ export function showTable(table: readonly TableCell[][] | ((table: TableCell[][]
 		}).join('  '))
 	})
 }
+
+export function getErrorMessage(error: any): string {
+	if (typeof error == 'string') {
+		if (error[0] == '{') return getErrorMessage(JSON.parse(error));
+		return error;
+	}
+	if (typeof error == 'object' && error !== null) {
+		const m = error.stack || error.message || error.code
+		if (m) return String(m);
+	}
+	return String(error) || 'Error'
+}

@@ -5,6 +5,8 @@
     "@joaomoreno/unique-names-generator": "^5.2.0",
     "clean-stack": "^6.0.0",
     "dayjs": "^1.11.19",
+    "marked": "^15.0.12",
+    "marked-terminal": "^7.3.0",
     "nano-spawn": "^2.0.0",
     "parse-duration-ms": "^0.1.0",
     "parse-sse": "^0.1.0",
