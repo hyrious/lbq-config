@@ -1,7 +1,7 @@
 /// <reference types="node" />
 
 import { homedir, tmpdir } from 'node:os';
-import { appendFileSync, createReadStream, existsSync, mkdirSync, readdirSync, renameSync, rmSync, unlinkSync } from 'node:fs';
+import { appendFileSync, createReadStream, existsSync, globSync, mkdirSync, readdirSync, renameSync, rmSync, unlinkSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -10,7 +10,7 @@ import { setTimeout } from 'node:timers/promises';
 import { createHash } from 'node:crypto';
 
 import spawn from 'nano-spawn';
-import { getErrorMessage, hostname, RegisterFunction, showTable, tryUnescape } from './lib/base';
+import { bool, getErrorMessage, hostname, RegisterFunction, showTable, tryUnescape } from './lib/base';
 import { taze } from './lib/taze';
 import { download, unzip } from './lib/download';
 import { scanBrokenNodeModules } from './lib/scanNodeModules';
@@ -406,6 +406,40 @@ export default function install(register: RegisterFunction) {
 			rmSync(garbage, { recursive: true, force: true })
 		}
 	}, 'Delete node_modules/.pkg-hash files after a broken install')
+
+	register('tsc', async (_, ...includes: string[]) => {
+		const tsgo = bool(includes, 'tsgo')
+		let files = globSync('**/tsconfig.json', { exclude: ['node_modules', 'scripts'] })
+		if (includes.length) {
+			files = files.filter(p => includes.some(a => p.includes(a)))
+		}
+		if (files.length === 0) {
+			console.log('Not found tsconfig.json')
+			return
+		}
+		const { confirm, multiselect, isCancel } = await import('@clack/prompts')
+		if (files.length === 1) {
+			const response = await confirm({ message: `Run \$ ${tsgo ? 'tsgo' : 'tsc'} --noEmit -p ${files[0]} ?` })
+			if (!response || isCancel(response)) {
+				return
+			}
+		} else {
+			const response = await multiselect({
+				message: 'Select one or more projects to run ts check',
+				options: files.map(e => ({ label: e, value: e })),
+				initialValues: files
+			})
+			if (isCancel(response) || !response.length) {
+				return;
+			}
+			files = response
+		}
+		for (const file of files) {
+			console.log(`$ ${tsgo ? 'tsgo' : 'tsc'} --noEmit -p ${file}`)
+			const result = spawnSync('tsc', ['--noEmit', '-p', file], { stdio: 'inherit' })
+			process.exitCode ||= result.status
+		}
+	}, 'Run tsc --noEmit')
 }
 
 function getBalance(data: any): string {

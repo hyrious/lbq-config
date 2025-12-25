@@ -65,3 +65,18 @@ export function getErrorMessage(error: any): string {
 	}
 	return String(error) || 'Error'
 }
+
+export function bool(argv: string[], flag: string | string[]): boolean {
+	if (Array.isArray(flag)) {
+		return flag.map(f => bool(argv, f)).reduce((a, b) => a || b)
+	}
+	if (flag[0] !== '-') {
+		flag = flag.length == 1 ? '-' + flag : '--' + flag
+	}
+	const index = argv.indexOf(flag)
+	if (index >= 0) {
+		argv.splice(index, 1)
+		return true
+	}
+	return false
+}
