@@ -390,6 +390,15 @@ export default function install(register: RegisterFunction) {
 		if (logFiles.length > 5) {
 			logFiles.sort().slice(0, logFiles.length - 5).forEach(f => unlinkSync(join(import.meta.dirname, 'private', f)))
 		}
+
+		function getBalance(data: any): string {
+			// DeepSeek
+			if (Array.isArray(data?.balance_infos)) {
+				return data.balance_infos.map(b => `${b.total_balance} ${b.currency}`).join(', ')
+			}
+			// No other for now
+			return data && typeof data == 'string' ? data : JSON.stringify(data)
+		}
 	}, 'Mini LLM client')
 
 	register('fix-ni', (_, ...args: string[]) => {
@@ -440,13 +449,10 @@ export default function install(register: RegisterFunction) {
 			process.exitCode ||= result.status
 		}
 	}, 'Run tsc --noEmit')
-}
 
-function getBalance(data: any): string {
-	// DeepSeek
-	if (Array.isArray(data?.balance_infos)) {
-		return data.balance_infos.map(b => `${b.total_balance} ${b.currency}`).join(', ')
-	}
-	// No other for now
-	return data && typeof data == 'string' ? data : JSON.stringify(data)
+	register('dev', () => {
+		const config = join(import.meta.dirname, 'tsconfig.json')
+		const result = spawnSync('tsc', ['--noEmit', '-p', config, '-w'], { stdio: 'inherit' })
+		process.exitCode ||= result.status
+	}, `Watch type issues in ${import.meta.dirname}`)
 }
