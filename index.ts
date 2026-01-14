@@ -418,6 +418,7 @@ export default function install(register: RegisterFunction) {
 
 	register('tsc', async (_, ...includes: string[]) => {
 		const tsgo = bool(includes, 'tsgo')
+		const watch = bool(includes, ['w', 'watch'])
 		let files = globSync('**/tsconfig.json', { exclude: ['node_modules', 'scripts'] })
 		if (includes.length) {
 			files = files.filter(p => includes.some(a => p.includes(a)))
@@ -444,8 +445,10 @@ export default function install(register: RegisterFunction) {
 			files = response
 		}
 		for (const file of files) {
-			console.log(`$ ${tsgo ? 'tsgo' : 'tsc'} --noEmit -p ${file}`)
-			const result = spawnSync('tsc', ['--noEmit', '-p', file], { stdio: 'inherit' })
+			const args = ['--noEmit', '-p', file]
+			if (watch) args.push('--watch')
+			console.log(`$ ${tsgo ? 'tsgo' : 'tsc'} ${args.join(' ')}`)
+			const result = spawnSync('tsc', args, { stdio: 'inherit' })
 			process.exitCode ||= result.status
 		}
 	}, 'Run tsc --noEmit')
