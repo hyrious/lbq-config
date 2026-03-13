@@ -207,13 +207,22 @@ export default function install(register: RegisterFunction) {
 		}
 	}, 'Search package from winget and install')
 
-	register('commit', async () => {
+	async function newBranchName() {
+		const { uniqueNamesGenerator, adjectives, animals } = await import('@joaomoreno/unique-names-generator')
+		const dictionaries = [adjectives, animals]
+		return uniqueNamesGenerator({ dictionaries, length: dictionaries.length, separator: '-' })
+	}
+
+	register('gswc', async () => {
+		const branchName = await newBranchName()
+		await spawn('git', ['switch', '-C', branchName], { stdio: 'inherit' })
+	}, 'Switch to random branch name')
+
+	register('commit', async (_, message: string | symbol = '') => {
 		const { text, isCancel } = await import('@clack/prompts')
-		const message = await text({ message: 'Commit message:' })
+		message ||= await text({ message: 'Commit message:' })
 		if (message && !isCancel(message)) {
-			const { uniqueNamesGenerator, adjectives, animals } = await import('@joaomoreno/unique-names-generator')
-			const dictionaries = [adjectives, animals]
-			const branchName = uniqueNamesGenerator({ dictionaries, length: dictionaries.length, separator: '-' })
+			const branchName = await newBranchName()
 			await spawn('git', ['switch', '-C', branchName], { stdio: 'inherit' })
 			await spawn('git', ['add', '.'], { stdio: 'inherit' })
 			await spawn('git', ['commit', '-m', message], { stdio: 'inherit' })
