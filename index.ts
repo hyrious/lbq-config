@@ -481,12 +481,16 @@ export default function install(register: RegisterFunction) {
 				groups.set(file, [deprecation])
 			}
 		}
+		const { highlight } = await import('@babel/code-frame')
 		for (const [file, deprecations] of groups) {
 			if (file.startsWith('..')) continue
 			console.log(`\x1B[35m${file}\x1B[m`)
-			deprecations.sort((a, b) => a.line - b.line || a.character - b.character)
-			for (const { line, message } of deprecations) {
-				console.log(`\x1B[32m${line}\x1B[m: ${message}`)
+			deprecations.sort((a, b) => a.line - b.line || a.character - b.character).filter((dep, index, self) => {
+				return index === 0 || dep.line !== self[index - 1].line
+			})
+			for (const { line, character, message, projectPath } of deprecations) {
+				const highlighted = highlight(scanner.getLine(join(projectPath, file), line));
+				console.log(`\x1B[32m${line}\x1B[m: ${scanner.mark(highlighted, character)} \x1B[2m// ${message}\x1B[m`)
 			}
 			console.log()
 		}
