@@ -15,6 +15,7 @@ import { taze } from './lib/taze';
 import { download, unzip } from './lib/download';
 import { scanBrokenNodeModules } from './lib/scanNodeModules';
 import { renderMarkdownStream } from './lib/renderMarkdownStream';
+import { Deprecation, DeprecationsScanner } from './lib/scanDeprecations';
 
 export default function install(register: RegisterFunction) {
 	const win32 = process.platform == 'win32'
@@ -467,4 +468,27 @@ export default function install(register: RegisterFunction) {
 		const result = spawnSync('tsc', ['--noEmit', '-p', config, '-w'], { stdio: 'inherit' })
 		process.exitCode ||= result.status
 	}, `Watch type issues in ${import.meta.dirname}`)
+
+	register('deprecate', async (_, ...args: string[]) => {
+		const silent = bool(args, ['-s', '--silent'])
+		const scanner = new DeprecationsScanner()
+		const groups = new Map<string, Deprecation[]>()
+		for await (const deprecation of scanner.scan(silent)) {
+			const { file } = deprecation
+			if (groups.has(file)) {
+				groups.get(file)!.push(deprecation)
+			} else {
+				groups.set(file, [deprecation])
+			}
+		}
+		for (const [file, deprecations] of groups) {
+			if (file.startsWith('..')) continue
+			console.log(`\x1B[35m${file}\x1B[m`)
+			deprecations.sort((a, b) => a.line - b.line || a.character - b.character)
+			for (const { line, message } of deprecations) {
+				console.log(`\x1B[32m${line}\x1B[m: ${message}`)
+			}
+			console.log()
+		}
+	}, 'Scan for deprecated APIs in the codebase')
 }
