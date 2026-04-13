@@ -495,4 +495,21 @@ export default function install(register: RegisterFunction) {
 			console.log()
 		}
 	}, 'Scan for deprecated APIs in the codebase')
+
+	register('sleep', async (_, ...args) => {
+		const duration = Number.parseFloat(args[0] || '1') * 1000
+		if (isNaN(duration) || duration < 0) {
+			console.error('Usage: sleep [duration in seconds]')
+			return
+		}
+		const { Spinner } = await import('picospinner')
+		const s = new Spinner('Sleeping...')
+		s.start()
+		const start = Date.now()
+		while (Date.now() - start < duration) {
+			s.setText(`Sleeping... ${Math.ceil((duration - (Date.now() - start)) / 1000)}s left`)
+			await setTimeout(1000)
+		}
+		s.succeed('Awake!')
+	}, 'Sleep for a while')
 }
