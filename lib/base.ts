@@ -80,3 +80,26 @@ export function bool(argv: string[], flag: string | string[]): boolean {
 	}
 	return false
 }
+
+export function str(argv: string[], flag: string | string[]): string | undefined {
+	if (Array.isArray(flag)) {
+		for (const f of flag) {
+			const v = str(argv, f)
+			if (v != null) return v
+		}
+		return
+	}
+	if (flag[0] !== '-') {
+		flag = flag.length == 1 ? '-' + flag : '--' + flag
+	}
+	const i = argv.findIndex(arg => arg == flag || arg.startsWith(flag + '='))
+	if (i < 0) return
+	const arg = argv[i]
+	if (arg == flag) {
+		const v = argv[i + 1]
+		argv.splice(i, v == null ? 1 : 2)
+		return v
+	}
+	argv.splice(i, 1)
+	return arg.slice(flag.length + 1)
+}

@@ -10,12 +10,13 @@ import { setTimeout } from 'node:timers/promises';
 import { createHash } from 'node:crypto';
 
 import spawn from 'nano-spawn';
-import { bool, getErrorMessage, hostname, RegisterFunction, showTable, tryUnescape } from './lib/base';
+import { bool, getErrorMessage, hostname, RegisterFunction, showTable, tryUnescape, str } from './lib/base';
 import { taze } from './lib/taze';
 import { download, unzip } from './lib/download';
 import { scanBrokenNodeModules } from './lib/scanNodeModules';
 import { renderMarkdownStream } from './lib/renderMarkdownStream';
 import { Deprecation, DeprecationsScanner } from './lib/scanDeprecations';
+import { moveWindow } from './lib/moveWindow';
 
 export default function install(register: RegisterFunction) {
 	const win32 = process.platform == 'win32'
@@ -261,9 +262,29 @@ export default function install(register: RegisterFunction) {
 	}, 'Upgrade bun')
 
 	if (macOS) register('dock', async () => {
-		const { runJxa } = await import('run-jxa')
-		await runJxa(`Application('iTerm2').windows[0].bounds = { x: 2048 - 710, y: 1152 - 455, width: 710, height: 455 }`)
+		await moveWindow('iTerm2', 'br', 710, 455)
 	}, 'Move iTerm2.app to bottom right corner of the screen')
+
+	if (macOS) register('move', async (_, appName = 'iTerm2', anchor = 'br', ...args) => {
+		let w = str(args, ['w', 'window']) || 'front'
+		const isNumber = (s: string | undefined) => s != null && s !== '' && Number.isFinite(Number(s))
+		if (args.length && !isNumber(args[args.length - 1])) {
+			w = args.pop()!
+		}
+		if (args.length > 2) {
+			throw new Error('Usage: move "App" anchor [width] [height] [window]')
+		}
+		const [width, height] = args
+		const nextWidth = width == null ? undefined : Number(width)
+		const nextHeight = height == null ? undefined : Number(height)
+		if (nextWidth != null && (!Number.isFinite(nextWidth) || nextWidth <= 0)) {
+			throw new Error(`Invalid width: ${width}`)
+		}
+		if (nextHeight != null && (!Number.isFinite(nextHeight) || nextHeight <= 0)) {
+			throw new Error(`Invalid height: ${height}`)
+		}
+		await moveWindow(appName, anchor, nextWidth, nextHeight, w)
+	}, 'Move app window to a screen anchor, e.g. move "iTerm2" br 710 455 front')
 
 	if (macOS) register('restart', async (_, input) => {
 		spawnSync('osascript', ['-e', `quit app ${JSON.stringify(input)}`], { stdio: 'inherit' });
@@ -272,22 +293,14 @@ export default function install(register: RegisterFunction) {
 	}, 'Restart app')
 
 	register('llm', async (_, ...args) => {
-		if (args.includes('-l') || args.includes('-m') || args.includes('--models')) {
+		if (args.includes('-l') || args.includes('--models')) {
 			const configs = await import('./private/llm.json', { with: { type: 'json' } }).then(mod => mod.default)
 			showTable(Object.keys(configs).map(key => [key, configs[key].model, configs[key].baseUrl]))
 			return
 		}
 
-		let content = ''
-		let model = ''
-		for (const arg of args) {
-			if (arg.startsWith('-m=') || arg.startsWith('--model=')) {
-				model = arg.slice(arg.indexOf('=') + 1)
-			} else {
-				if (content) content += ' '
-				content += arg
-			}
-		}
+		let model = str(args, ['m', 'model']) || ''
+		let content = args.join(' ')
 
 		if (!content) {
 			console.log('Usage: llm [-m=model] "3.9 and 3.11 which is bigger"')
