@@ -1,7 +1,7 @@
 /// <reference types="node" />
 
 import { homedir, tmpdir } from 'node:os';
-import { appendFileSync, createReadStream, existsSync, globSync, mkdirSync, readdirSync, renameSync, rmSync, unlinkSync } from 'node:fs';
+import { appendFileSync, createReadStream, existsSync, globSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -208,6 +208,49 @@ export default function install(register: RegisterFunction) {
 			}
 		}
 	}, 'Search package from winget and install')
+
+	function resolveCodexTrustTarget(): string {
+		const result = spawnSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' })
+		return result.status === 0 ? result.stdout.trim() : process.cwd()
+	}
+
+	function rewriteCodexProjects(configPath: string, target: string): void {
+		const source = existsSync(configPath) ? readFileSync(configPath, 'utf8').replace(/\r\n/g, '\n') : ''
+		const lines = source.split('\n')
+		const kept: string[] = []
+		let skippingProjects = false
+		for (const line of lines) {
+			if (/^\s*\[projects(?:\..+)?\]\s*$/.test(line)) {
+				skippingProjects = true
+				continue
+			}
+			if (skippingProjects && /^\s*\[.+\]\s*$/.test(line)) {
+				skippingProjects = false
+			}
+			if (!skippingProjects) {
+				kept.push(line)
+			}
+		}
+
+		const content = kept.join('\n').trimEnd()
+		const pathLiteral = JSON.stringify(target)
+		const projectBlock = `[projects.${pathLiteral}]\ntrust_level = "trusted"\n`
+		writeFileSync(configPath, `${content}${content ? '\n\n' : ''}${projectBlock}`)
+	}
+
+	register('codex', async (_, ...args) => {
+		const configDir = join(homedir(), '.codex')
+		const configPath = join(configDir, 'config.toml')
+		const target = resolveCodexTrustTarget()
+		mkdirSync(configDir, { recursive: true })
+		rewriteCodexProjects(configPath, target)
+
+		const codexArgs = args.includes('--yolo') || args.includes('--dangerously-bypass-approvals-and-sandbox')
+			? args
+			: ['--yolo', ...args]
+		const result = spawnSync('codex', codexArgs, { stdio: 'inherit' })
+		process.exitCode ||= result.status ?? 1
+	}, 'Trust current repo for Codex, then run codex --yolo')
 
 	async function newBranchName() {
 		const { uniqueNamesGenerator, adjectives, animals } = await import('@joaomoreno/unique-names-generator')
