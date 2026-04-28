@@ -352,7 +352,7 @@ export default function install(register: RegisterFunction) {
 
 		const { parseServerSentEvents } = await import('parse-sse')
 		const configs = await import('./private/llm.json', { with: { type: 'json' } }).then(mod => mod.default) as unknown as {
-			[m: string]: { baseUrl: string, apiKey: string, model: string; balance: string | { method?: string; url: string } }
+			[m: string]: { baseUrl: string, apiKey: string, model: string; extra?: {}, balance?: string | { method?: string; url: string } }
 		}
 		const config = model ? configs[model] : Object.values(configs)[0]
 		if (!config) {
@@ -384,6 +384,7 @@ export default function install(register: RegisterFunction) {
 				],
 				max_tokens: 2048,
 				temperature: 0.2,
+				...config.extra,
 				stream: true
 			}),
 			dispatcher,
