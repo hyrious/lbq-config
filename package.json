@@ -1,13 +1,15 @@
 {
+  "type": "module",
   "dependencies": {
     "@babel/code-frame": "^7.29.0",
     "@clack/prompts": "^1.2.0",
     "@hyrious/lbq": "^0.2.1",
     "@joaomoreno/unique-names-generator": "^5.2.0",
     "clean-stack": "^6.0.0",
+    "cli-highlight": "^2.1.11",
     "dayjs": "^1.11.20",
+    "get-east-asian-width": "^1.5.0",
     "marked": "^15.0.12",
-    "marked-terminal": "^7.3.0",
     "nano-spawn": "^2.1.0",
     "parse-duration-ms": "^0.1.0",
     "parse-sse": "^0.1.0",
