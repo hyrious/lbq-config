@@ -343,10 +343,11 @@ export default function install(register: RegisterFunction) {
 		}
 
 		let model = str(args, ['m', 'model']) || ''
+		let system = str(args, ['s', 'system']) || ''
 		let content = args.join(' ')
 
 		if (!content) {
-			console.log('Usage: llm [-m=model] "3.9 and 3.11 which is bigger"')
+			console.log('Usage: llm [-m=model] [-s=system_prompt] "3.9 and 3.11 which is bigger"')
 			return
 		}
 
@@ -367,6 +368,9 @@ export default function install(register: RegisterFunction) {
 			return
 		}
 
+		const messages = [{ role: 'user', content }]
+		if (system) messages.unshift({ role: 'system', content: system })
+
 		// baseUrl should be compatible with /chat/completions
 		const response = await fetch(config.baseUrl, {
 			method: 'POST',
@@ -376,12 +380,7 @@ export default function install(register: RegisterFunction) {
 			},
 			body: JSON.stringify({
 				model: config.model,
-				messages: [
-					{
-						role: 'user',
-						content: content,
-					},
-				],
+				messages,
 				max_tokens: 2048,
 				temperature: 0.2,
 				...config.extra,
