@@ -1,10 +1,39 @@
+---
+lockfileVersion: '9.0'
+
+importers:
+
+  .:
+    configDependencies:
+      '@pnpm/plugin-better-defaults':
+        specifier: 0.3.0
+        version: 0.3.0
+      '@pnpm/plugin-trusted-deps':
+        specifier: 0.3.0-2
+        version: 0.3.0-2
+
+packages:
+
+  '@pnpm/plugin-better-defaults@0.3.0':
+    resolution: {integrity: sha512-J500v1tfdFlKXkvO0ivkwJlrTiKNa+2Yb6aX01719FPnH2fGuf9we0ObZRB3OoTetWEChLudHglNDYl7Z3+mLQ==}
+
+  '@pnpm/plugin-trusted-deps@0.3.0-2':
+    resolution: {integrity: sha512-TSzTPlaaIH3blOqzbRRTRkXj1CpMLRLqv4H9mmLXlihliJg/G1hACEA8OmOxTxix141QnazegkiJ9Y90sPCdqA==}
+
+snapshots:
+
+  '@pnpm/plugin-better-defaults@0.3.0': {}
+
+  '@pnpm/plugin-trusted-deps@0.3.0-2': {}
+
+---
 lockfileVersion: '9.0'
 
 settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
-pnpmfileChecksum: sha256-N7laNYP2CXS7+nB5oMe9h8qCjKustgiZJgJjgIdc4SE=
+pnpmfileChecksum: sha256-JNeHuoNAM1ryVYQgn8bmM0c6aDNQUCxX47L5nQQfFzg=
 
 importers:
 
@@ -58,6 +87,9 @@ importers:
       taze:
         specifier: ^19.11.0
         version: 19.11.0
+      tildify:
+        specifier: ^3.0.0
+        version: 3.0.0
       undici:
         specifier: ^7.16.0
         version: 7.24.7
@@ -467,6 +499,10 @@ packages:
 
   thenify@3.3.1:
     resolution: {integrity: sha512-RVZSIV5IG10Hk3enotrhvz0T9em6cyHBLkH/YAZuKqd8hRkKhSfCGIcP2KUY0EPxndzANBmNllzWPwak+bheSw==}
+
+  tildify@3.0.0:
+    resolution: {integrity: sha512-9ZLMl75qnTLr7oSEmWJbKemFS/fP4TMBiF6PFwGwLpgobebU1ehXoGbadJ+7jT8fjaz2G82JgN9G4taz+o1j1w==}
+    engines: {node: ^12.20.0 || ^14.13.1 || >=16.0.0}
 
   tinyexec@1.1.1:
     resolution: {integrity: sha512-VKS/ZaQhhkKFMANmAOhhXVoIfBXblQxGX1myCQ2faQrfmobMftXeJPcZGp0gS07ocvGJWDLZGyOZDadDBqYIJg==}
@@ -912,6 +948,8 @@ snapshots:
   thenify@3.3.1:
     dependencies:
       any-promise: 1.3.0
+
+  tildify@3.0.0: {}
 
   tinyexec@1.1.1: {}
 

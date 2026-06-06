@@ -197,76 +197,28 @@ class AnsiCodeTracker {
 // ANSI-aware word wrapping
 // ---------------------------------------------------------------------------
 
-function splitIntoTokensWithAnsi(text: string): string[] {
-	const tokens: string[] = []
-	let current = ''
-	let pendingAnsi = ''
-	let inWhitespace = false
+function splitIntoAnsiAwareSegments(text: string): Array<{ type: 'ansi' | 'grapheme'; value: string; width: number }> {
+	const segments: Array<{ type: 'ansi' | 'grapheme'; value: string; width: number }> = []
 	let i = 0
-
 	while (i < text.length) {
 		const ansiResult = extractAnsiCode(text, i)
 		if (ansiResult) {
-			pendingAnsi += ansiResult.code
-			i += ansiResult.length
-			continue
-		}
-		const char = text[i]!
-		const charIsSpace = char === ' '
-		if (charIsSpace !== inWhitespace && current) {
-			tokens.push(current)
-			current = ''
-		}
-		if (pendingAnsi) { current += pendingAnsi; pendingAnsi = '' }
-		inWhitespace = charIsSpace
-		current += char
-		i++
-	}
-	if (pendingAnsi) current += pendingAnsi
-	if (current) tokens.push(current)
-	return tokens
-}
-
-function breakLongWord(word: string, width: number, tracker: AnsiCodeTracker): string[] {
-	const lines: string[] = []
-	let currentLine = tracker.getActiveCodes()
-	let currentWidth = 0
-
-	// Collect segments (ANSI codes + grapheme clusters)
-	const segments: Array<{ type: 'ansi' | 'grapheme'; value: string }> = []
-	let i = 0
-	while (i < word.length) {
-		const ansiResult = extractAnsiCode(word, i)
-		if (ansiResult) {
-			segments.push({ type: 'ansi', value: ansiResult.code })
+			segments.push({ type: 'ansi', value: ansiResult.code, width: 0 })
 			i += ansiResult.length
 		} else {
 			let end = i
-			while (end < word.length && !extractAnsiCode(word, end)) end++
-			for (const seg of segmenter.segment(word.slice(i, end))) {
-				segments.push({ type: 'grapheme', value: seg.segment })
+			while (end < text.length && !extractAnsiCode(text, end)) end++
+			for (const { segment } of segmenter.segment(text.slice(i, end))) {
+				segments.push({ type: 'grapheme', value: segment, width: graphemeWidth(segment) })
 			}
 			i = end
 		}
 	}
+	return segments
+}
 
-	for (const seg of segments) {
-		if (seg.type === 'ansi') {
-			currentLine += seg.value
-			tracker.process(seg.value)
-			continue
-		}
-		const w = graphemeWidth(seg.value)
-		if (currentWidth + w > width) {
-			lines.push(currentLine)
-			currentLine = tracker.getActiveCodes()
-			currentWidth = 0
-		}
-		currentLine += seg.value
-		currentWidth += w
-	}
-	if (currentLine) lines.push(currentLine)
-	return lines.length > 0 ? lines : ['']
+function trimTrailingSpacesWithAnsi(line: string): string {
+	return line.replace(/(?:\x1b\[[\d;]*m)* +((?:\x1b\[[\d;]*m)*)$/u, '$1')
 }
 
 function wrapSingleLine(line: string, width: number): string[] {
@@ -275,46 +227,48 @@ function wrapSingleLine(line: string, width: number): string[] {
 
 	const wrapped: string[] = []
 	const tracker = new AnsiCodeTracker()
-	const tokens = splitIntoTokensWithAnsi(line)
+	const segments = splitIntoAnsiAwareSegments(line)
 	let currentLine = ''
 	let currentVisibleLength = 0
+	let lastBreakIndex = -1
+	let lastBreakVisibleLength = -1
 
-	for (const token of tokens) {
-		const tokenVisibleLength = visibleWidth(token)
-		const isWhitespace = token.trim() === ''
-
-		if (tokenVisibleLength > width && !isWhitespace) {
-			if (currentLine) {
-				wrapped.push(currentLine)
-				currentLine = ''
-				currentVisibleLength = 0
-			}
-			const broken = breakLongWord(token, width, tracker)
-			wrapped.push(...broken.slice(0, -1))
-			currentLine = broken[broken.length - 1]!
-			currentVisibleLength = visibleWidth(currentLine)
+	for (const segment of segments) {
+		if (segment.type === 'ansi') {
+			currentLine += segment.value
+			tracker.process(segment.value)
 			continue
 		}
 
-		if (currentVisibleLength + tokenVisibleLength > width && currentVisibleLength > 0) {
-			wrapped.push(currentLine.trimEnd())
-			currentLine = isWhitespace ? tracker.getActiveCodes() : tracker.getActiveCodes() + token
-			currentVisibleLength = isWhitespace ? 0 : tokenVisibleLength
-		} else {
-			currentLine += token
-			currentVisibleLength += tokenVisibleLength
+		const isSpace = segment.value === ' '
+		if (currentVisibleLength + segment.width > width && currentVisibleLength > 0) {
+			if (lastBreakIndex >= 0 && currentVisibleLength - lastBreakVisibleLength <= Math.floor(width / 3)) {
+				const lineToPush = trimTrailingSpacesWithAnsi(currentLine.slice(0, lastBreakIndex))
+				const carry = currentLine.slice(lastBreakIndex).trimStart()
+				wrapped.push(lineToPush)
+				currentLine = tracker.getActiveCodes() + carry
+			} else {
+				wrapped.push(trimTrailingSpacesWithAnsi(currentLine))
+				currentLine = tracker.getActiveCodes()
+			}
+			currentVisibleLength = visibleWidth(currentLine)
+			lastBreakIndex = -1
+			lastBreakVisibleLength = -1
+			if (isSpace) continue
 		}
-		// Update tracker for ANSI codes in the token
-		let j = 0
-		while (j < token.length) {
-			const ansi = extractAnsiCode(token, j)
-			if (ansi) { tracker.process(ansi.code); j += ansi.length; continue }
-			j++
+
+		if (isSpace) {
+			lastBreakIndex = currentLine.length
+			lastBreakVisibleLength = currentVisibleLength
 		}
+		currentLine += segment.value
+		currentVisibleLength += segment.width
 	}
 
-	if (currentLine) wrapped.push(currentLine)
-	return wrapped.length > 0 ? wrapped.map(l => l.trimEnd()) : ['']
+	if (currentLine) {
+		wrapped.push(trimTrailingSpacesWithAnsi(currentLine))
+	}
+	return wrapped.length > 0 ? wrapped : ['']
 }
 
 export function wrapTextWithAnsi(text: string, width: number): string[] {

@@ -1,7 +1,7 @@
 /// <reference types="node" />
 
 import { homedir, tmpdir } from 'node:os';
-import { appendFileSync, createReadStream, existsSync, globSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { createReadStream, existsSync, globSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -15,6 +15,7 @@ import { taze } from './lib/taze';
 import { download, unzip } from './lib/download';
 import { scanBrokenNodeModules } from './lib/scanNodeModules';
 import { renderMarkdownStream } from './lib/renderMarkdownStream';
+import { collectOpenAIChatStream, pruneLlmLogs, writePiStyleLlmLog, type LlmStreamResult } from './lib/llm';
 import { Deprecation, DeprecationsScanner } from './lib/scanDeprecations';
 import { moveWindow } from './lib/moveWindow';
 
@@ -392,37 +393,25 @@ export default function install(register: RegisterFunction) {
 			throw new Error(await response.text())
 		}
 
-		const { default: dayjs } = await import('dayjs')
-		const logFile = join(import.meta.dirname, 'private', `llm-${dayjs().unix()}.log`)
+		const streamResult: LlmStreamResult = {
+			stopReason: 'stop',
+			assistantContent: '',
+			reasoningContent: '',
+			usage: undefined,
+		}
+		await renderMarkdownStream(collectOpenAIChatStream(
+			parseServerSentEvents(response as unknown as Response),
+			streamResult,
+		));
+		const logDir = join(import.meta.dirname, 'private')
+		const logFile = writePiStyleLlmLog(logDir, {
+			model: config.model,
+			system,
+			content,
+			...streamResult,
+		})
 
-		let finalUsage: any
-		const stream: AsyncGenerator<string> = (async function* () {
-			for await (const event of parseServerSentEvents(response as unknown as Response)) {
-				if (event.data === '[DONE]') break
-
-				appendFileSync(logFile, event.data + '\n')
-
-				const { choices: [item], usage } = JSON.parse(event.data)
-				if (usage) {
-					finalUsage = usage
-				}
-
-				if (item.delta.reasoning_content) {
-					yield item.delta.reasoning_content
-				}
-
-				if (item.delta.content) {
-					yield item.delta.content
-				}
-
-				if (item.finish_reason === 'stop') {
-					break
-				}
-			}
-		})();
-		await renderMarkdownStream(stream);
-
-		if (finalUsage) {
+		if (streamResult.usage) {
 			let extra = ''
 			if (config.balance) {
 				let method = 'GET'
@@ -449,13 +438,11 @@ export default function install(register: RegisterFunction) {
 					console.error(`\n\x1B[31mFailed to get balance: ${message}\x1B[m`)
 				}
 			}
-			console.log(`\n\x1B[2m// Used ${finalUsage.total_tokens} (${finalUsage.prompt_tokens} + ${finalUsage.completion_tokens}) tokens${extra}\x1B[m`)
+			console.log(`\n\x1B[2m// Used ${streamResult.usage.total_tokens} (${streamResult.usage.prompt_tokens} + ${streamResult.usage.completion_tokens}) tokens${extra}\x1B[m`)
+			console.log(`\x1B[2m// pi --export ${logFile} /tmp/out.html`)
 		}
 
-		const logFiles = readdirSync(join(import.meta.dirname, 'private')).filter(f => f.startsWith('llm-') && f.endsWith('.log'))
-		if (logFiles.length > 5) {
-			logFiles.sort().slice(0, logFiles.length - 5).forEach(f => unlinkSync(join(import.meta.dirname, 'private', f)))
-		}
+		pruneLlmLogs(logDir)
 
 		function getBalance(data: any): string {
 			// DeepSeek
