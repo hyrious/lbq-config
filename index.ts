@@ -554,5 +554,9 @@ export default function install(register: RegisterFunction) {
 			await setTimeout(1000)
 		}
 		s.succeed('Awake!')
+		if (macOS) {
+			const { default: display } = await import('display-notification')
+			display({ title: 'Awake!', subtitle: 'Sleep', text: `Finished after ${duration / 1000}s`, sound: 'Frog' })
+		}
 	}, 'Sleep for a while')
 }

@@ -8,6 +8,7 @@
     "clean-stack": "^6.0.0",
     "cli-highlight": "^2.1.11",
     "dayjs": "^1.11.20",
+    "display-notification": "^3.0.0",
     "get-east-asian-width": "^1.5.0",
     "marked": "^15.0.12",
     "nano-spawn": "^2.1.0",
