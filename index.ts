@@ -249,7 +249,10 @@ export default function install(register: RegisterFunction) {
 		const codexArgs = args.includes('--yolo') || args.includes('--dangerously-bypass-approvals-and-sandbox')
 			? args
 			: ['--yolo', ...args]
-		const result = spawnSync('codex', codexArgs, { stdio: 'inherit' })
+		const result = spawnSync('codex', codexArgs, {
+			stdio: 'inherit',
+			env: { ...process.env, RUST_LOG: process.env.RUST_LOG ?? 'warn' },
+		})
 		process.exitCode ||= result.status ?? 1
 	}, 'Trust current repo for Codex, then run codex --yolo')
 
