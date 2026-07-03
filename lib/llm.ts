@@ -22,6 +22,7 @@ export interface LlmLogData extends LlmStreamResult {
 export async function* collectOpenAIChatStream(
 	events: AsyncIterable<{ data: string }>,
 	result: LlmStreamResult,
+	reasoning = true,
 ): AsyncGenerator<string> {
 	for await (const event of events) {
 		if (event.data === '[DONE]') break
@@ -43,7 +44,7 @@ export async function* collectOpenAIChatStream(
 		const delta = item.delta ?? {}
 		if (delta.reasoning_content) {
 			result.reasoningContent += delta.reasoning_content
-			yield delta.reasoning_content
+			if (reasoning) yield delta.reasoning_content
 		}
 
 		if (delta.content) {

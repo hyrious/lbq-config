@@ -348,10 +348,11 @@ export default function install(register: RegisterFunction) {
 
 		let model = str(args, ['m', 'model']) || ''
 		let system = str(args, ['s', 'system']) || ''
+		let raw = bool(args, ['r', 'raw'])
 		let content = args.join(' ')
 
 		if (!content) {
-			console.log('Usage: llm [-m=model] [-s=system_prompt] "3.9 and 3.11 which is bigger"')
+			console.log('Usage: llm [-r] [-m=model] [-s=system_prompt] "3.9 and 3.11 which is bigger"')
 			return
 		}
 
@@ -403,10 +404,13 @@ export default function install(register: RegisterFunction) {
 			reasoningContent: '',
 			usage: undefined,
 		}
-		await renderMarkdownStream(collectOpenAIChatStream(
+		const responseStream = collectOpenAIChatStream(
 			parseServerSentEvents(response as unknown as Response),
 			streamResult,
-		));
+			!raw,
+		)
+		if (raw) for await (const chunk of responseStream) process.stdout.write(chunk)
+		else await renderMarkdownStream(responseStream);
 		const logDir = join(import.meta.dirname, 'private')
 		const logFile = writePiStyleLlmLog(logDir, {
 			model: config.model,
@@ -443,8 +447,9 @@ export default function install(register: RegisterFunction) {
 				}
 			}
 			const { promptTokens, completionTokens, totalTokens } = normalizeLlmUsage(streamResult.usage)
-			console.log(`\n\x1B[2m// Used ${totalTokens} (${promptTokens} + ${completionTokens}) tokens${extra}\x1B[m`)
-			console.log(`\x1B[2m// pi --export ${logFile} /tmp/out.html`)
+			let log = raw ? console.error : console.log
+			log(`\n\x1B[2m// Used ${totalTokens} (${promptTokens} + ${completionTokens}) tokens${extra}\x1B[m`)
+			log(`\x1B[2m// pi --export ${logFile} /tmp/out.html`)
 		}
 
 		pruneLlmLogs(logDir)
