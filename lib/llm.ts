@@ -26,28 +26,43 @@ export async function* collectOpenAIChatStream(
 	for await (const event of events) {
 		if (event.data === '[DONE]') break
 
-		const { id, model, choices: [item], usage } = JSON.parse(event.data)
+		const chunk = JSON.parse(event.data)
+		const { id, model, choices, usage, lastOne } = chunk
+		const item = Array.isArray(choices) ? choices[0] : undefined
 		result.responseId ??= id
 		result.responseModel ??= model
 		if (usage) {
 			result.usage = usage
 		}
 
-		if (item.delta.reasoning_content) {
-			result.reasoningContent += item.delta.reasoning_content
-			yield item.delta.reasoning_content
+		if (!item) {
+			if (lastOne) break
+			continue
 		}
 
-		if (item.delta.content) {
-			result.assistantContent += item.delta.content
-			yield item.delta.content
+		const delta = item.delta ?? {}
+		if (delta.reasoning_content) {
+			result.reasoningContent += delta.reasoning_content
+			yield delta.reasoning_content
+		}
+
+		if (delta.content) {
+			result.assistantContent += delta.content
+			yield delta.content
 		}
 
 		if (item.finish_reason) {
 			result.stopReason = normalizeStopReason(item.finish_reason)
-			break
 		}
+		if (lastOne) break
 	}
+}
+
+export function normalizeLlmUsage(usage: any) {
+	const promptTokens = usage?.prompt_tokens ?? usage?.input_tokens ?? usage?.input ?? 0
+	const completionTokens = usage?.completion_tokens ?? usage?.output_tokens ?? usage?.output ?? 0
+	const totalTokens = usage?.total_tokens ?? usage?.totalTokens ?? usage?.total ?? promptTokens + completionTokens
+	return { promptTokens, completionTokens, totalTokens }
 }
 
 export function writePiStyleLlmLog(logDir: string, data: LlmLogData): string {
@@ -57,9 +72,7 @@ export function writePiStyleLlmLog(logDir: string, data: LlmLogData): string {
 	const userEntryId = shortHash(`${sessionId}\0user`)
 	const assistantEntryId = shortHash(`${sessionId}\0assistant`)
 	const logFile = join(logDir, `llm-${Math.floor(now / 1000)}.jsonl`)
-	const promptTokens = data.usage?.prompt_tokens ?? 0
-	const completionTokens = data.usage?.completion_tokens ?? 0
-	const totalTokens = data.usage?.total_tokens ?? promptTokens + completionTokens
+	const { promptTokens, completionTokens, totalTokens } = normalizeLlmUsage(data.usage)
 	const assistantContent: any[] = []
 	if (data.reasoningContent) {
 		assistantContent.push({ type: 'thinking', thinking: data.reasoningContent })

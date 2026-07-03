@@ -15,7 +15,7 @@ import { taze } from './lib/taze';
 import { download, unzip } from './lib/download';
 import { scanBrokenNodeModules } from './lib/scanNodeModules';
 import { renderMarkdownStream } from './lib/renderMarkdownStream';
-import { collectOpenAIChatStream, pruneLlmLogs, writePiStyleLlmLog, type LlmStreamResult } from './lib/llm';
+import { collectOpenAIChatStream, normalizeLlmUsage, pruneLlmLogs, writePiStyleLlmLog, type LlmStreamResult } from './lib/llm';
 import { Deprecation, DeprecationsScanner } from './lib/scanDeprecations';
 import { moveWindow } from './lib/moveWindow';
 
@@ -388,6 +388,7 @@ export default function install(register: RegisterFunction) {
 				max_tokens: 2048,
 				temperature: 0.2,
 				...config.extra,
+				stream_options: { include_usage: true },
 				stream: true
 			}),
 			dispatcher,
@@ -441,7 +442,8 @@ export default function install(register: RegisterFunction) {
 					console.error(`\n\x1B[31mFailed to get balance: ${message}\x1B[m`)
 				}
 			}
-			console.log(`\n\x1B[2m// Used ${streamResult.usage.total_tokens} (${streamResult.usage.prompt_tokens} + ${streamResult.usage.completion_tokens}) tokens${extra}\x1B[m`)
+			const { promptTokens, completionTokens, totalTokens } = normalizeLlmUsage(streamResult.usage)
+			console.log(`\n\x1B[2m// Used ${totalTokens} (${promptTokens} + ${completionTokens}) tokens${extra}\x1B[m`)
 			console.log(`\x1B[2m// pi --export ${logFile} /tmp/out.html`)
 		}
 
