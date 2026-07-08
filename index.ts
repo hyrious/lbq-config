@@ -569,4 +569,28 @@ export default function install(register: RegisterFunction) {
 			display({ title: 'Awake!', subtitle: 'Sleep', text: `Finished after ${duration / 1000}s`, sound: 'Frog' })
 		}
 	}, 'Sleep for a while')
+
+	register('ghproxy', () => {
+		const file = join(homedir(), '.gitconfig')
+		let text = readFileSync(file, 'utf8'), i = 0, j = 0, config = '', proxy = false
+		if ((i = text.indexOf('[http "https://github.com')) >= 0) {
+			j = text.indexOf('[', i + 1)
+			if (j < 0) j = text.length;
+			if (text[i - 1] == ' ' && text[i - 2] == '#') {
+				i -= 2
+				config = text.slice(i, j).replaceAll('# ', '')
+				proxy = true
+			} else if (i === 0 || text[i - 1] === '\n') {
+				config = text.slice(i, j).trimEnd().replace(/^/gm, '# ') + (text.includes('\r') ? '\r\n' : '\n')
+				proxy = false
+			} else {
+				throw new Error('not found the config')
+			}
+			text = text.slice(0, i) + config + text.slice(j)
+			writeFileSync(file, text)
+			console.log(`Proxy ${proxy ? 'ON' : 'OFF'}.`)
+		} else {
+			throw new Error('not found the config file')
+		}
+	}, 'Toggle .gitconfig proxy settings')
 }
