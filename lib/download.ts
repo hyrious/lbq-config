@@ -6,12 +6,6 @@ import * as streamWeb from 'node:stream/web'
 import { spawnSync } from 'node:child_process';
 import { tryUnescape } from './base';
 
-declare global {
-	interface Response {
-		body: streamWeb.ReadableStream<Uint8Array> | null
-	}
-}
-
 export async function download(url: string, outdir: string): Promise<string> {
 	const tmpdir = await fsp.mkdtemp('lbq-')
 	const file = tryUnescape(path.basename(url))
@@ -19,7 +13,7 @@ export async function download(url: string, outdir: string): Promise<string> {
 		const response = await fetch(url)
 		if (response.ok && response.body) {
 			await stream.promises.pipeline(
-				stream.Readable.fromWeb(response.body),
+				stream.Readable.fromWeb(response.body as streamWeb.ReadableStream),
 				fs.createWriteStream(path.join(tmpdir, file)), { end: true }
 			)
 			await fsp.rename(path.join(tmpdir, file), path.join(outdir, file))

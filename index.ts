@@ -480,7 +480,6 @@ export default function install(register: RegisterFunction) {
 	}, 'Delete node_modules/.pkg-hash files after a broken install')
 
 	register('tsc', async (_, ...includes: string[]) => {
-		const tsgo = bool(includes, 'tsgo')
 		const watch = bool(includes, ['w', 'watch'])
 		let files = globSync('**/tsconfig.json', { exclude: ['node_modules', 'scripts'] })
 		if (includes.length) {
@@ -492,7 +491,7 @@ export default function install(register: RegisterFunction) {
 		}
 		const { confirm, multiselect, isCancel } = await import('@clack/prompts')
 		if (files.length === 1) {
-			const response = await confirm({ message: `Run \$ ${tsgo ? 'tsgo' : 'tsc'} --noEmit -p ${files[0]} ?` })
+			const response = await confirm({ message: `Run \$ tsc --noEmit -p ${files[0]} ?` })
 			if (!response || isCancel(response)) {
 				return
 			}
@@ -510,7 +509,7 @@ export default function install(register: RegisterFunction) {
 		for (const file of files) {
 			const args = ['--noEmit', '-p', file]
 			if (watch) args.push('--watch')
-			console.log(`$ ${tsgo ? 'tsgo' : 'tsc'} ${args.join(' ')}`)
+			console.log(`$ tsc ${args.join(' ')}`)
 			const result = spawnSync('tsc', args, { stdio: 'inherit' })
 			process.exitCode ||= result.status
 		}

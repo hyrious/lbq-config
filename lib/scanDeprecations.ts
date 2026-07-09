@@ -1,9 +1,22 @@
-import type { Node, TypeChecker, Symbol, Declaration, JSDocComment } from 'typescript';
+import type { Checker, JSDocTagInfo, NodeHandle, Project, Symbol as TypeScriptSymbol } from 'typescript/unstable/sync';
+import type { Node } from 'typescript/unstable/ast';
 
-import { globSync } from 'node:fs';
-import { dirname, relative } from 'node:path';
+import { globSync, readFileSync } from 'node:fs';
+import { dirname, relative, resolve } from 'node:path';
 
-type TypeScriptModule = typeof import('typescript');
+type TypeScriptVersionModule = typeof import('typescript');
+type TypeScriptSyncModule = typeof import('typescript/unstable/sync');
+type TypeScriptAstModule = typeof import('typescript/unstable/ast');
+
+interface TypeScriptModules {
+	readonly version: TypeScriptVersionModule;
+	readonly sync: TypeScriptSyncModule;
+	readonly ast: TypeScriptAstModule;
+}
+
+interface NamedNode extends Node {
+	readonly name?: Node;
+}
 
 export interface Deprecation {
 	readonly projectPath: string;
@@ -21,19 +34,17 @@ export class DeprecationsScanner {
 	private static readonly identifierStartPattern = /[$_\p{ID_Start}]/u;
 	private static readonly identifierPartPattern = /[$_\u200C\u200D\p{ID_Continue}]/u;
 
-	private ts: TypeScriptModule | null = null;
-	async loadTypeScript(): Promise<TypeScriptModule> {
+	private ts: TypeScriptModules | null = null;
+	async loadTypeScript(): Promise<TypeScriptModules> {
 		if (this.ts) {
 			return this.ts;
 		}
-		try {
-			const resolved = require.resolve('typescript', { paths: [this.cwd] });
-			this.ts = await import(resolved) as TypeScriptModule;
-			console.log(`Loaded TypeScript ${this.ts.version} from current project`);
-		} catch (error) {
-			this.ts = await import('typescript') as TypeScriptModule;
-			console.log(`Using bundled TypeScript ${this.ts.version}`);
-		}
+		this.ts = {
+			version: await import('typescript') as TypeScriptVersionModule,
+			sync: await import('typescript/unstable/sync') as TypeScriptSyncModule,
+			ast: await import('typescript/unstable/ast') as TypeScriptAstModule
+		};
+		console.log(`Using bundled TypeScript ${this.ts.version.version}`);
 		return this.ts;
 	}
 
@@ -60,157 +71,198 @@ export class DeprecationsScanner {
 	}
 
 	async *scanProject(configPath: string): AsyncIterable<Deprecation> {
-		const ts = this.ts!;
-		const configFile = ts.readConfigFile(configPath, ts.sys.readFile);
-		if (configFile.error) {
-			console.error(`Failed to read ${configPath}: ${configFile.error.messageText}`);
-			return;
-		}
-		const configParseResult = ts.parseJsonConfigFileContent(configFile.config, ts.sys, this.cwd);
-		if (configParseResult.errors.length) {
-			console.error(`Failed to parse ${configPath}: ${configParseResult.errors.map(e => e.messageText).join(', ')}`);
-			return;
-		}
-		const program = ts.createProgram({
-			rootNames: configParseResult.fileNames,
-			options: configParseResult.options
-		});
-		const checker = program.getTypeChecker();
+		const ts = await this.loadTypeScript();
+		const api = new ts.sync.API({ cwd: this.cwd });
 		const deprecations: Deprecation[] = [];
 		const seen = new Set<string>();
-		for (const sourceFile of program.getSourceFiles()) {
-			if (sourceFile.isDeclarationFile) continue;
-			const visit = (node: Node): void => {
-				const result = this.getDeprecationAtNode(node, checker, ts);
-				if (result) {
-					const { line, character } = ts.getLineAndCharacterOfPosition(sourceFile, result.location.getStart());
-					const deprecation: Deprecation = {
-						projectPath: dirname(configPath),
-						file: relative(dirname(configPath), sourceFile.fileName),
-						line: line + 1,
-						character: character + 1,
-						message: result.message.replaceAll(/\s+/g, ' ').trim()
-					};
-					const key = `${deprecation.file}:${deprecation.line}:${deprecation.character}:${deprecation.message}`;
-					if (!seen.has(key)) {
-						seen.add(key);
-						deprecations.push(deprecation);
+		const projectPath = resolve(this.cwd, dirname(configPath));
+		let snapshot: InstanceType<TypeScriptSyncModule['Snapshot']> | null = null;
+		try {
+			snapshot = api.updateSnapshot({ openProjects: [configPath] });
+		} catch (error) {
+			console.error(`Failed to load ${configPath}: ${error instanceof Error ? error.message : String(error)}`);
+			api.close();
+			return;
+		}
+
+		try {
+			const project = snapshot.getProject(configPath) ?? snapshot.getProjects()[0];
+			if (!project) {
+				console.error(`Failed to load ${configPath}: no TypeScript project was created.`);
+				return;
+			}
+			const configErrors = project.program.getConfigFileParsingDiagnostics();
+			if (configErrors.length) {
+				console.error(`Failed to parse ${configPath}: ${configErrors.map(e => e.text).join(', ')}`);
+				return;
+			}
+			const checker = project.checker;
+			for (const fileName of project.program.getSourceFileNames()) {
+				const sourceFile = project.program.getSourceFile(fileName);
+				if (!sourceFile || sourceFile.isDeclarationFile) continue;
+				const visit = (node: Node): void => {
+					const result = this.getDeprecationAtNode(node, checker, project, ts);
+					if (result) {
+						const { line, character } = sourceFile.getLineAndCharacterOfPosition(result.location.getStart());
+						const deprecation: Deprecation = {
+							projectPath,
+							file: relative(projectPath, sourceFile.fileName),
+							line: line + 1,
+							character: character + 1,
+							message: result.message.replaceAll(/\s+/g, ' ').trim()
+						};
+						const key = `${deprecation.file}:${deprecation.line}:${deprecation.character}:${deprecation.message}`;
+						if (!seen.has(key)) {
+							seen.add(key);
+							deprecations.push(deprecation);
+						}
 					}
-				}
-				ts.forEachChild(node, visit);
-			};
-			visit(sourceFile);
+					node.forEachChild(visit);
+				};
+				visit(sourceFile);
+			}
+		} finally {
+			snapshot.dispose();
+			api.close();
 		}
 		yield* deprecations;
 	}
 
-	private getDeprecationAtNode(node: Node, checker: TypeChecker, ts: TypeScriptModule): { location: Node; message: string; } | null {
-		if (ts.isCallExpression(node) || ts.isNewExpression(node) || ts.isTaggedTemplateExpression(node)) {
+	private getDeprecationAtNode(node: Node, checker: Checker, project: Project, ts: TypeScriptModules): { location: Node; message: string; } | null {
+		const ast = ts.ast;
+		if (ast.isTaggedTemplateExpression(node)) {
 			const signature = checker.getResolvedSignature(node);
-			const message = this.getDeprecationFromDeclaration(signature?.declaration, ts);
+			const message = this.getDeprecationFromNodeHandle(signature?.declaration, project, ast);
 			if (message) {
-				return { location: ts.isTaggedTemplateExpression(node) ? node.tag : node.expression, message };
+				return { location: node.tag, message };
 			}
 			return null;
 		}
 
-		if (!this.isReferenceNode(node, ts) || this.shouldSkipReferenceNode(node, ts)) {
+		if (ast.isCallExpression(node) || ast.isNewExpression(node)) {
+			const signature = checker.getResolvedSignature(node);
+			const message = this.getDeprecationFromNodeHandle(signature?.declaration, project, ast);
+			if (message) {
+				return { location: node.expression, message };
+			}
+			return null;
+		}
+
+		if (!this.isReferenceNode(node, ast) || this.shouldSkipReferenceNode(node, ast)) {
 			return null;
 		}
 
 		const symbol = this.getSymbolAtLocation(node, checker, ts);
-		const message = symbol ? this.getDeprecationFromSymbol(symbol, ts) : null;
+		const message = symbol ? this.getDeprecationFromSymbol(symbol, checker, project, ts) : null;
 		return message ? { location: node, message } : null;
 	}
 
-	private getSymbolAtLocation(node: Node, checker: TypeChecker, ts: TypeScriptModule): Symbol | null {
+	private getSymbolAtLocation(node: Node, checker: Checker, ts: TypeScriptModules): TypeScriptSymbol | null {
 		const symbol = checker.getSymbolAtLocation(node);
 		if (!symbol) {
 			return null;
 		}
-		if (symbol.flags & ts.SymbolFlags.Alias) {
+		if (symbol.flags & ts.sync.SymbolFlags.Alias) {
 			return checker.getAliasedSymbol(symbol);
 		}
 		return symbol;
 	}
 
-	private getDeprecationFromSymbol(symbol: Symbol, ts: TypeScriptModule): string | null {
+	private getDeprecationFromSymbol(symbol: TypeScriptSymbol, checker: Checker, project: Project, ts: TypeScriptModules): string | null {
 		const declarations = symbol.declarations ?? [];
 		const declaration = symbol.valueDeclaration ?? declarations[0];
-		const message = this.getDeprecationFromDeclaration(declaration, ts);
+		const message = this.getDeprecationFromNodeHandle(declaration, project, ts.ast);
 		if (message) {
 			return message;
 		}
 		if (declarations.length > 1) {
 			return null;
 		}
-		for (const tag of symbol.getJsDocTags()) {
-			if (tag.name === 'deprecated') {
-				return tag.text ? tag.text.map(part => part.text).join('') : DeprecationsScanner.deprecatedMessage;
-			}
+		return this.getDeprecationFromJsDocTags(symbol.getJsDocTags(checker));
+	}
+
+	private getDeprecationFromNodeHandle(handle: NodeHandle | undefined, project: Project, ast: TypeScriptAstModule): string | null {
+		return this.getDeprecationFromDeclaration(handle?.resolve(project), ast);
+	}
+
+	private getDeprecationFromJsDocTags(tags: readonly JSDocTagInfo[]): string | null {
+		for (const tag of tags) {
+			if (tag.name == 'deprecated') return tag.text || DeprecationsScanner.deprecatedMessage;
 		}
 		return null;
 	}
 
-	private getDeprecationFromDeclaration(declaration: Declaration | undefined, ts: TypeScriptModule): string | null {
+	private getDeprecationFromDeclaration(declaration: Node | undefined, ast: TypeScriptAstModule): string | null {
 		if (!declaration) {
 			return null;
 		}
-		for (const tag of ts.getJSDocTags(declaration)) {
-			if (tag.tagName.text === 'deprecated') {
-				return this.getJSDocCommentText(tag.comment) || DeprecationsScanner.deprecatedMessage;
+		for (const tag of ast.getJSDocTags(declaration)) {
+			if (tag.tagName.text == 'deprecated') {
+				return ast.getTextOfJSDocComment(tag.comment) || DeprecationsScanner.deprecatedMessage;
 			}
 		}
 		return null;
 	}
 
-	private getJSDocCommentText(comment: string | readonly JSDocComment[] | undefined): string {
-		if (typeof comment === 'string') {
-			return comment;
-		}
-		if (!comment) {
-			return '';
-		}
-		return comment.map(part => typeof part === 'string' ? part : part.getText()).join('');
+	private isReferenceNode(node: Node, ast: TypeScriptAstModule): boolean {
+		return ast.isIdentifier(node) || ast.isPrivateIdentifier(node) || ast.isPropertyAccessExpression(node) || ast.isElementAccessExpression(node);
 	}
 
-	private isReferenceNode(node: Node, ts: TypeScriptModule): boolean {
-		return ts.isIdentifier(node) || ts.isPrivateIdentifier(node) || ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node);
-	}
-
-	private shouldSkipReferenceNode(node: Node, ts: TypeScriptModule): boolean {
+	private shouldSkipReferenceNode(node: Node, ast: TypeScriptAstModule): boolean {
 		const parent = node.parent;
 		if (!parent) {
 			return true;
 		}
 
-		if ((ts.isCallExpression(parent) || ts.isNewExpression(parent)) && parent.expression === node) {
+		if ((ast.isCallExpression(parent) || ast.isNewExpression(parent)) && parent.expression === node) {
 			return true;
 		}
-		if (ts.isTaggedTemplateExpression(parent) && parent.tag === node) {
+		if (ast.isTaggedTemplateExpression(parent) && parent.tag === node) {
 			return true;
 		}
-		if (ts.isPropertyAccessExpression(parent) && parent.name === node) {
+		if (ast.isPropertyAccessExpression(parent) && parent.name === node) {
 			return true;
 		}
-		if ((ts.isVariableDeclaration(parent) || ts.isParameter(parent) || ts.isFunctionDeclaration(parent) || ts.isClassDeclaration(parent) || ts.isInterfaceDeclaration(parent) || ts.isTypeAliasDeclaration(parent) || ts.isEnumDeclaration(parent) || ts.isEnumMember(parent) || ts.isMethodDeclaration(parent) || ts.isMethodSignature(parent) || ts.isPropertyDeclaration(parent) || ts.isPropertySignature(parent) || ts.isGetAccessorDeclaration(parent) || ts.isSetAccessorDeclaration(parent) || ts.isBindingElement(parent) || ts.isImportClause(parent) || ts.isImportSpecifier(parent) || ts.isNamespaceImport(parent) || ts.isImportEqualsDeclaration(parent) || ts.isTypeParameterDeclaration(parent) || ts.isModuleDeclaration(parent)) && parent.name === node) {
+		if (this.isNamedDeclarationNode(parent, ast) && parent.name === node) {
 			return true;
 		}
-		if (ts.isTypeReferenceNode(parent) || ts.isExpressionWithTypeArguments(parent) || ts.isImportTypeNode(parent) || ts.isTypeQueryNode(parent)) {
+		if (ast.isTypeReferenceNode(parent) || ast.isExpressionWithTypeArguments(parent) || ast.isImportTypeNode(parent) || ast.isTypeQueryNode(parent)) {
 			return true;
 		}
 
 		return false;
 	}
 
+	private isNamedDeclarationNode(node: Node, ast: TypeScriptAstModule): node is NamedNode {
+		return ast.isVariableDeclaration(node)
+			|| ast.isParameterDeclaration(node)
+			|| ast.isFunctionDeclaration(node)
+			|| ast.isClassDeclaration(node)
+			|| ast.isInterfaceDeclaration(node)
+			|| ast.isTypeAliasDeclaration(node)
+			|| ast.isEnumDeclaration(node)
+			|| ast.isEnumMember(node)
+			|| ast.isMethodDeclaration(node)
+			|| ast.isMethodSignatureDeclaration(node)
+			|| ast.isPropertyDeclaration(node)
+			|| ast.isPropertySignatureDeclaration(node)
+			|| ast.isGetAccessorDeclaration(node)
+			|| ast.isSetAccessorDeclaration(node)
+			|| ast.isBindingElement(node)
+			|| ast.isImportClause(node)
+			|| ast.isImportSpecifier(node)
+			|| ast.isNamespaceImport(node)
+			|| ast.isImportEqualsDeclaration(node)
+			|| ast.isTypeParameterDeclaration(node)
+			|| ast.isModuleDeclaration(node);
+	}
+
 	private readonly cache = new Map<string, string[]>();
 	getLine(file: string, line: number): string {
-		const ts = this.ts!;
 		if (!this.cache.has(file)) {
-			const content = ts.sys.readFile(file);
-			if (content) {
-				this.cache.set(file, content.split(/\r?\n/));
-			} else {
+			try {
+				this.cache.set(file, readFileSync(file, 'utf8').split(/\r?\n/));
+			} catch (error) {
 				this.cache.set(file, []);
 			}
 		}
