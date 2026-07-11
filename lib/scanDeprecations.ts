@@ -134,7 +134,7 @@ export class DeprecationsScanner {
 			const signature = checker.getResolvedSignature(node);
 			const message = this.getDeprecationFromNodeHandle(signature?.declaration, project, ast);
 			if (message) {
-				return { location: node.tag, message };
+				return { location: this.getInvocationLocation(node.tag, ast), message };
 			}
 			return null;
 		}
@@ -143,7 +143,7 @@ export class DeprecationsScanner {
 			const signature = checker.getResolvedSignature(node);
 			const message = this.getDeprecationFromNodeHandle(signature?.declaration, project, ast);
 			if (message) {
-				return { location: node.expression, message };
+				return { location: this.getInvocationLocation(node.expression, ast), message };
 			}
 			return null;
 		}
@@ -155,6 +155,16 @@ export class DeprecationsScanner {
 		const symbol = this.getSymbolAtLocation(node, checker, ts);
 		const message = symbol ? this.getDeprecationFromSymbol(symbol, checker, project, ts) : null;
 		return message ? { location: node, message } : null;
+	}
+
+	private getInvocationLocation(node: Node, ast: TypeScriptAstModule): Node {
+		if (ast.isPropertyAccessExpression(node)) {
+			return node.name;
+		}
+		if (ast.isElementAccessExpression(node)) {
+			return node.argumentExpression;
+		}
+		return node;
 	}
 
 	private getSymbolAtLocation(node: Node, checker: Checker, ts: TypeScriptModules): TypeScriptSymbol | null {
