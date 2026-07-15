@@ -251,7 +251,7 @@ export default function install(register: RegisterFunction) {
 			: ['--yolo', ...args]
 		const result = spawnSync('codex', codexArgs, {
 			stdio: 'inherit',
-			env: { ...process.env, RUST_LOG: process.env.RUST_LOG ?? 'warn' },
+			env: { ...process.env, RUST_LOG: process.env.RUST_LOG ?? 'warn', HTTPS_PROXY: 'http://localhost:7890' },
 		})
 		process.exitCode ||= result.status ?? 1
 	}, 'Trust current repo for Codex, then run codex --yolo')
