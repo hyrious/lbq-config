@@ -16,8 +16,47 @@ import { download, unzip } from './lib/download';
 import { scanBrokenNodeModules } from './lib/scanNodeModules';
 import { renderMarkdownStream } from './lib/renderMarkdownStream';
 import { collectOpenAIChatStream, normalizeLlmUsage, pruneLlmLogs, writePiStyleLlmLog, type LlmStreamResult } from './lib/llm';
-import { Deprecation, DeprecationsScanner } from './lib/scanDeprecations';
+import { DeprecationsScanner } from './lib/scanDeprecations';
 import { moveWindow } from './lib/moveWindow';
+
+class ProgressLine {
+	private readonly stream: NodeJS.WriteStream;
+	private text = ''
+
+	constructor(stream: NodeJS.WriteStream) {
+		this.stream = stream
+	}
+
+	render(text: string): void {
+		if (!this.stream.isTTY) return
+		this.text = text
+		this.stream.write(`\r\x1B[2K${text}`)
+	}
+
+	clear(): void {
+		if (!this.stream.isTTY || !this.text) return
+		this.stream.write('\r\x1B[2K')
+		this.text = ''
+	}
+
+	writeStdout(text: string): void {
+		const progressText = this.text
+		this.clear()
+		process.stdout.write(text)
+		if (progressText) {
+			this.render(progressText)
+		}
+	}
+
+	done(): void {
+		this.clear()
+	}
+}
+
+function formatPercent(scanned: number, total: number): string {
+	if (total == 0) return '100.0'
+	return (scanned / total * 100).toFixed(1)
+}
 
 export default function install(register: RegisterFunction) {
 	const win32 = process.platform == 'win32'
@@ -524,27 +563,25 @@ export default function install(register: RegisterFunction) {
 	register('deprecate', async (_, ...args: string[]) => {
 		const silent = bool(args, ['-s', '--silent'])
 		const scanner = new DeprecationsScanner()
-		const groups = new Map<string, Deprecation[]>()
-		for await (const deprecation of scanner.scan(silent)) {
-			const { file } = deprecation
-			if (groups.has(file)) {
-				groups.get(file)!.push(deprecation)
-			} else {
-				groups.set(file, [deprecation])
-			}
-		}
 		const { highlight } = await import('@babel/code-frame')
-		for (const [file, deprecations] of groups) {
-			if (file.startsWith('..')) continue
-			console.log(`\x1B[35m${file}\x1B[m`)
-			deprecations.sort((a, b) => a.line - b.line || a.character - b.character).filter((dep, index, self) => {
-				return index === 0 || dep.line !== self[index - 1].line
-			})
-			for (const { line, character, message, projectPath } of deprecations) {
-				const highlighted = highlight(scanner.getLine(join(projectPath, file), line));
-				console.log(`\x1B[32m${line}\x1B[m: ${scanner.mark(highlighted, character)} \x1B[2m// ${message}\x1B[m`)
+		const progress = new ProgressLine(process.stderr)
+		try {
+			for await (const result of scanner.scanFiles(silent)) {
+				progress.render(`Scanned ${result.scanned}/${result.total} files (${formatPercent(result.scanned, result.total)}%)`)
+				if (result.file.startsWith('..') || !result.deprecations.length) continue
+				const deprecations = result.deprecations.toSorted((a, b) => a.line - b.line || a.character - b.character).filter((dep, index, self) => {
+					return index === 0 || dep.line !== self[index - 1].line
+				})
+				let output = `\x1B[35m${result.file}\x1B[m\n`
+				for (const { line, character, message, projectPath } of deprecations) {
+					const highlighted = highlight(scanner.getLine(join(projectPath, result.file), line))
+					output += `\x1B[32m${line}\x1B[m: ${scanner.mark(highlighted, character)} \x1B[2m// ${message}\x1B[m\n`
+				}
+				output += '\n'
+				progress.writeStdout(output)
 			}
-			console.log()
+		} finally {
+			progress.done()
 		}
 	}, 'Scan for deprecated APIs in the codebase')
 

@@ -1,8 +1,11 @@
-import type { Checker, JSDocTagInfo, NodeHandle, Project, Symbol as TypeScriptSymbol } from 'typescript/unstable/sync';
+import type { Diagnostic, Project } from 'typescript/unstable/sync';
 import type { Node } from 'typescript/unstable/ast';
 
 import { globSync, readFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { createInterface } from 'node:readline';
 import { dirname, relative, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 type TypeScriptVersionModule = typeof import('typescript');
 type TypeScriptSyncModule = typeof import('typescript/unstable/sync');
@@ -14,10 +17,6 @@ interface TypeScriptModules {
 	readonly ast: TypeScriptAstModule;
 }
 
-interface NamedNode extends Node {
-	readonly name?: Node;
-}
-
 export interface Deprecation {
 	readonly projectPath: string;
 	readonly file: string;
@@ -26,16 +25,56 @@ export interface Deprecation {
 	readonly message: string;
 }
 
+export interface DeprecationFileResult {
+	readonly projectPath: string;
+	readonly file: string;
+	readonly scanned: number;
+	readonly total: number;
+	readonly deprecations: readonly Deprecation[];
+}
+
+interface WorkerRequest {
+	readonly cwd: string;
+	readonly configPath: string;
+	readonly files: readonly string[];
+}
+
+interface WorkerFileResult {
+	readonly projectPath: string;
+	readonly file: string;
+	readonly deprecations: readonly Deprecation[];
+}
+
+interface WorkerResultMessage {
+	readonly kind: 'result';
+	readonly result: WorkerFileResult;
+}
+
+interface WorkerErrorMessage {
+	readonly kind: 'error';
+	readonly message: string;
+}
+
+type WorkerMessage = WorkerResultMessage | WorkerErrorMessage;
+
 export class DeprecationsScanner {
-	constructor(readonly cwd: string = process.cwd()) { }
+	readonly cwd: string;
+
+	constructor(cwd: string = process.cwd()) {
+		this.cwd = cwd;
+	}
 
 	private static readonly deprecatedMessage = 'Deprecated API';
+	static readonly workerFlag = '--scan-deprecations-worker';
 	private static readonly sgrPattern = /\x1B\[[0-9;]*m/g;
 	private static readonly identifierStartPattern = /[$_\p{ID_Start}]/u;
 	private static readonly identifierPartPattern = /[$_\u200C\u200D\p{ID_Continue}]/u;
+	private static readonly sourceFilePattern = /\.[cm]?[jt]sx?$/;
+	private static readonly declarationFilePattern = /\.d\.[cm]?ts$/;
+	private static readonly defaultBatchSize = 100;
 
 	private ts: TypeScriptModules | null = null;
-	async loadTypeScript(): Promise<TypeScriptModules> {
+	async loadTypeScript(silent = false): Promise<TypeScriptModules> {
 		if (this.ts) {
 			return this.ts;
 		}
@@ -44,11 +83,19 @@ export class DeprecationsScanner {
 			sync: await import('typescript/unstable/sync') as TypeScriptSyncModule,
 			ast: await import('typescript/unstable/ast') as TypeScriptAstModule
 		};
-		console.log(`Using bundled TypeScript ${this.ts.version.version}`);
+		if (!silent) {
+			console.error(`Using bundled TypeScript ${this.ts.version.version}`);
+		}
 		return this.ts;
 	}
 
 	async *scan(silent = false): AsyncIterable<Deprecation> {
+		for await (const result of this.scanFiles(silent)) {
+			yield* result.deprecations;
+		}
+	}
+
+	async *scanFiles(silent = false, batchSize = DeprecationsScanner.defaultBatchSize): AsyncIterable<DeprecationFileResult> {
 		let projects = globSync('**/tsconfig.json', { exclude: ['node_modules', 'scripts'], cwd: this.cwd });
 
 		if (!silent) {
@@ -66,205 +113,218 @@ export class DeprecationsScanner {
 
 		await this.loadTypeScript();
 		for (const project of projects) {
-			yield* this.scanProject(project);
+			yield* this.scanProjectFiles(project, batchSize);
 		}
 	}
 
 	async *scanProject(configPath: string): AsyncIterable<Deprecation> {
+		for await (const result of this.scanProjectFiles(configPath)) {
+			yield* result.deprecations;
+		}
+	}
+
+	async *scanProjectFiles(configPath: string, batchSize = DeprecationsScanner.defaultBatchSize): AsyncIterable<DeprecationFileResult> {
 		const ts = await this.loadTypeScript();
+		const files = this.getProjectSourceFiles(configPath, ts);
+		const total = files.length;
+		let scanned = 0;
+
+		for (let index = 0; index < files.length; index += batchSize) {
+			const batch = files.slice(index, index + batchSize);
+			for await (const result of this.scanWorkerBatch({ cwd: this.cwd, configPath, files: batch })) {
+				scanned++;
+				yield { ...result, scanned, total };
+			}
+		}
+	}
+
+	private getProjectSourceFiles(configPath: string, ts: TypeScriptModules): readonly string[] {
 		const api = new ts.sync.API({ cwd: this.cwd });
-		const deprecations: Deprecation[] = [];
-		const seen = new Set<string>();
-		const projectPath = resolve(this.cwd, dirname(configPath));
+		try {
+			return api.parseConfigFile(configPath).fileNames.filter(fileName => {
+				return DeprecationsScanner.sourceFilePattern.test(fileName) && !DeprecationsScanner.declarationFilePattern.test(fileName);
+			});
+		} catch (error) {
+			console.error(`Failed to parse ${configPath}: ${error instanceof Error ? error.message : String(error)}`);
+			return [];
+		} finally {
+			api.close();
+		}
+	}
+
+	private async *scanWorkerBatch(request: WorkerRequest): AsyncIterable<WorkerFileResult> {
+		const workerPath = fileURLToPath(import.meta.url);
+		const worker = spawn(process.execPath, [...DeprecationsScanner.getWorkerExecArgv(), workerPath, DeprecationsScanner.workerFlag], {
+			cwd: this.cwd,
+			stdio: ['pipe', 'pipe', 'inherit']
+		});
+		let failed = false;
+		const exit = new Promise<number | null>((resolveExit, rejectExit) => {
+			worker.once('error', rejectExit);
+			worker.once('close', resolveExit);
+		});
+		worker.stdin.end(JSON.stringify(request));
+
+		const lines = createInterface({ input: worker.stdout });
+		for await (const line of lines) {
+			if (!line) {
+				continue;
+			}
+			const message = JSON.parse(line) as WorkerMessage;
+			if (message.kind == 'result') {
+				yield message.result;
+			} else {
+				failed = true;
+				console.error(message.message);
+			}
+		}
+
+		const exitCode = await exit;
+		if (exitCode != 0 && !failed) {
+			console.error(`Deprecation worker exited with code ${exitCode}.`);
+		}
+	}
+
+	private static getWorkerExecArgv(): string[] {
+		const args: string[] = [];
+		let skipNext = false;
+		for (const arg of process.execArgv) {
+			if (skipNext) {
+				skipNext = false;
+				continue;
+			}
+			if (arg == '--input-type') {
+				skipNext = true;
+				continue;
+			}
+			if (arg.startsWith('--input-type=')) {
+				continue;
+			}
+			args.push(arg);
+		}
+		return args;
+	}
+
+	private async scanBatchInCurrentProcess(request: WorkerRequest): Promise<readonly WorkerFileResult[]> {
+		const ts = await this.loadTypeScript(true);
+		const api = new ts.sync.API({ cwd: request.cwd });
+		const projectPath = resolve(this.cwd, dirname(request.configPath));
 		let snapshot: InstanceType<TypeScriptSyncModule['Snapshot']> | null = null;
 		try {
-			snapshot = api.updateSnapshot({ openProjects: [configPath] });
+			snapshot = api.updateSnapshot({ openProjects: [request.configPath], openFiles: [...request.files] });
 		} catch (error) {
-			console.error(`Failed to load ${configPath}: ${error instanceof Error ? error.message : String(error)}`);
+			console.error(`Failed to load ${request.configPath}: ${error instanceof Error ? error.message : String(error)}`);
 			api.close();
-			return;
+			return [];
 		}
 
 		try {
-			const project = snapshot.getProject(configPath) ?? snapshot.getProjects()[0];
+			const project = snapshot.getProject(request.configPath) ?? snapshot.getProjects()[0];
 			if (!project) {
-				console.error(`Failed to load ${configPath}: no TypeScript project was created.`);
-				return;
+				console.error(`Failed to load ${request.configPath}: no TypeScript project was created.`);
+				return [];
 			}
 			const configErrors = project.program.getConfigFileParsingDiagnostics();
 			if (configErrors.length) {
-				console.error(`Failed to parse ${configPath}: ${configErrors.map(e => e.text).join(', ')}`);
-				return;
+				console.error(`Failed to parse ${request.configPath}: ${configErrors.map(e => e.text).join(', ')}`);
+				return [];
 			}
-			const checker = project.checker;
-			for (const fileName of project.program.getSourceFileNames()) {
-				const sourceFile = project.program.getSourceFile(fileName);
-				if (!sourceFile || sourceFile.isDeclarationFile) continue;
-				const visit = (node: Node): void => {
-					const result = this.getDeprecationAtNode(node, checker, project, ts);
-					if (result) {
-						const { line, character } = sourceFile.getLineAndCharacterOfPosition(result.location.getStart());
-						const deprecation: Deprecation = {
-							projectPath,
-							file: relative(projectPath, sourceFile.fileName),
-							line: line + 1,
-							character: character + 1,
-							message: result.message.replaceAll(/\s+/g, ' ').trim()
-						};
-						const key = `${deprecation.file}:${deprecation.line}:${deprecation.character}:${deprecation.message}`;
-						if (!seen.has(key)) {
-							seen.add(key);
-							deprecations.push(deprecation);
-						}
-					}
-					node.forEachChild(visit);
-				};
-				visit(sourceFile);
-			}
+			return request.files.map(fileName => this.scanFile(project, fileName, projectPath, ts));
 		} finally {
 			snapshot.dispose();
 			api.close();
 		}
-		yield* deprecations;
 	}
 
-	private getDeprecationAtNode(node: Node, checker: Checker, project: Project, ts: TypeScriptModules): { location: Node; message: string; } | null {
-		const ast = ts.ast;
-		if (ast.isTaggedTemplateExpression(node)) {
-			const signature = checker.getResolvedSignature(node);
-			const message = this.getDeprecationFromNodeHandle(signature?.declaration, project, ast);
+	private scanFile(project: Project, fileName: string, projectPath: string, ts: TypeScriptModules): WorkerFileResult {
+		const sourceFile = project.program.getSourceFile(fileName);
+		if (!sourceFile || sourceFile.isDeclarationFile) {
+			return {
+				projectPath,
+				file: relative(projectPath, fileName),
+				deprecations: []
+			};
+		}
+
+		const seen = new Set<string>();
+		const deprecations: Deprecation[] = [];
+		for (const diagnostic of project.program.getSuggestionDiagnostics(fileName)) {
+			if (!diagnostic.reportsDeprecated) {
+				continue;
+			}
+			const position = sourceFile.getLineAndCharacterOfPosition(diagnostic.pos);
+			const deprecation: Deprecation = {
+				projectPath,
+				file: relative(projectPath, sourceFile.fileName),
+				line: position.line + 1,
+				character: position.character + 1,
+				message: this.getDiagnosticMessage(diagnostic, project, ts).replaceAll(/\s+/g, ' ').trim()
+			};
+			const key = `${deprecation.file}:${deprecation.line}:${deprecation.character}:${deprecation.message}`;
+			if (!seen.has(key)) {
+				seen.add(key);
+				deprecations.push(deprecation);
+			}
+		}
+		return {
+			projectPath,
+			file: relative(projectPath, sourceFile.fileName),
+			deprecations
+		};
+	}
+
+	private getDiagnosticMessage(diagnostic: Diagnostic, project: Project, ts: TypeScriptModules): string {
+		for (const related of diagnostic.relatedInformation ?? []) {
+			if (!related.fileName) {
+				continue;
+			}
+			const sourceFile = project.program.getSourceFile(related.fileName);
+			if (!sourceFile) {
+				continue;
+			}
+			const message = this.getDeprecatedMessageAtPosition(sourceFile, related.pos, related.end, ts.ast);
 			if (message) {
-				return { location: this.getInvocationLocation(node.tag, ast), message };
-			}
-			return null;
-		}
-
-		if (ast.isCallExpression(node) || ast.isNewExpression(node)) {
-			const signature = checker.getResolvedSignature(node);
-			const message = this.getDeprecationFromNodeHandle(signature?.declaration, project, ast);
-			if (message) {
-				return { location: this.getInvocationLocation(node.expression, ast), message };
-			}
-			return null;
-		}
-
-		if (!this.isReferenceNode(node, ast) || this.shouldSkipReferenceNode(node, ast)) {
-			return null;
-		}
-
-		const symbol = this.getSymbolAtLocation(node, checker, ts);
-		const message = symbol ? this.getDeprecationFromSymbol(symbol, checker, project, ts) : null;
-		return message ? { location: node, message } : null;
-	}
-
-	private getInvocationLocation(node: Node, ast: TypeScriptAstModule): Node {
-		if (ast.isPropertyAccessExpression(node)) {
-			return node.name;
-		}
-		if (ast.isElementAccessExpression(node)) {
-			return node.argumentExpression;
-		}
-		return node;
-	}
-
-	private getSymbolAtLocation(node: Node, checker: Checker, ts: TypeScriptModules): TypeScriptSymbol | null {
-		const symbol = checker.getSymbolAtLocation(node);
-		if (!symbol) {
-			return null;
-		}
-		if (symbol.flags & ts.sync.SymbolFlags.Alias) {
-			return checker.getAliasedSymbol(symbol);
-		}
-		return symbol;
-	}
-
-	private getDeprecationFromSymbol(symbol: TypeScriptSymbol, checker: Checker, project: Project, ts: TypeScriptModules): string | null {
-		const declarations = symbol.declarations ?? [];
-		const declaration = symbol.valueDeclaration ?? declarations[0];
-		const message = this.getDeprecationFromNodeHandle(declaration, project, ts.ast);
-		if (message) {
-			return message;
-		}
-		if (declarations.length > 1) {
-			return null;
-		}
-		return this.getDeprecationFromJsDocTags(symbol.getJsDocTags(checker));
-	}
-
-	private getDeprecationFromNodeHandle(handle: NodeHandle | undefined, project: Project, ast: TypeScriptAstModule): string | null {
-		return this.getDeprecationFromDeclaration(handle?.resolve(project), ast);
-	}
-
-	private getDeprecationFromJsDocTags(tags: readonly JSDocTagInfo[]): string | null {
-		for (const tag of tags) {
-			if (tag.name == 'deprecated') return tag.text || DeprecationsScanner.deprecatedMessage;
-		}
-		return null;
-	}
-
-	private getDeprecationFromDeclaration(declaration: Node | undefined, ast: TypeScriptAstModule): string | null {
-		if (!declaration) {
-			return null;
-		}
-		for (const tag of ast.getJSDocTags(declaration)) {
-			if (tag.tagName.text == 'deprecated') {
-				return ast.getTextOfJSDocComment(tag.comment) || DeprecationsScanner.deprecatedMessage;
+				return message;
 			}
 		}
-		return null;
+		return diagnostic.text || DeprecationsScanner.deprecatedMessage;
 	}
 
-	private isReferenceNode(node: Node, ast: TypeScriptAstModule): boolean {
-		return ast.isIdentifier(node) || ast.isPrivateIdentifier(node) || ast.isPropertyAccessExpression(node) || ast.isElementAccessExpression(node);
+	private getDeprecatedMessageAtPosition(sourceFile: Node, pos: number, end: number, ast: TypeScriptAstModule): string | null {
+		let message: string | null = null;
+		const visit = (node: Node): void => {
+			if (node.getFullStart() > pos || node.end < end) {
+				return;
+			}
+			for (const tag of ast.getJSDocTags(node)) {
+				if (tag.tagName.text == 'deprecated') {
+					message = ast.getTextOfJSDocComment(tag.comment) || DeprecationsScanner.deprecatedMessage;
+				}
+			}
+			node.forEachChild(visit);
+		};
+		visit(sourceFile);
+		return message;
 	}
 
-	private shouldSkipReferenceNode(node: Node, ast: TypeScriptAstModule): boolean {
-		const parent = node.parent;
-		if (!parent) {
-			return true;
+	static async runWorker(): Promise<void> {
+		const input = await DeprecationsScanner.readStdin();
+		const request = JSON.parse(input) as WorkerRequest;
+		const scanner = new DeprecationsScanner(request.cwd);
+		const results = await scanner.scanBatchInCurrentProcess(request);
+		for (const result of results) {
+			const message: WorkerResultMessage = { kind: 'result', result };
+			process.stdout.write(`${JSON.stringify(message)}\n`);
 		}
-
-		if ((ast.isCallExpression(parent) || ast.isNewExpression(parent)) && parent.expression === node) {
-			return true;
-		}
-		if (ast.isTaggedTemplateExpression(parent) && parent.tag === node) {
-			return true;
-		}
-		if (ast.isPropertyAccessExpression(parent) && parent.name === node) {
-			return true;
-		}
-		if (this.isNamedDeclarationNode(parent, ast) && parent.name === node) {
-			return true;
-		}
-		if (ast.isTypeReferenceNode(parent) || ast.isExpressionWithTypeArguments(parent) || ast.isImportTypeNode(parent) || ast.isTypeQueryNode(parent)) {
-			return true;
-		}
-
-		return false;
 	}
 
-	private isNamedDeclarationNode(node: Node, ast: TypeScriptAstModule): node is NamedNode {
-		return ast.isVariableDeclaration(node)
-			|| ast.isParameterDeclaration(node)
-			|| ast.isFunctionDeclaration(node)
-			|| ast.isClassDeclaration(node)
-			|| ast.isInterfaceDeclaration(node)
-			|| ast.isTypeAliasDeclaration(node)
-			|| ast.isEnumDeclaration(node)
-			|| ast.isEnumMember(node)
-			|| ast.isMethodDeclaration(node)
-			|| ast.isMethodSignatureDeclaration(node)
-			|| ast.isPropertyDeclaration(node)
-			|| ast.isPropertySignatureDeclaration(node)
-			|| ast.isGetAccessorDeclaration(node)
-			|| ast.isSetAccessorDeclaration(node)
-			|| ast.isBindingElement(node)
-			|| ast.isImportClause(node)
-			|| ast.isImportSpecifier(node)
-			|| ast.isNamespaceImport(node)
-			|| ast.isImportEqualsDeclaration(node)
-			|| ast.isTypeParameterDeclaration(node)
-			|| ast.isModuleDeclaration(node);
+	private static async readStdin(): Promise<string> {
+		let input = '';
+		process.stdin.setEncoding('utf8');
+		for await (const chunk of process.stdin) {
+			input += chunk;
+		}
+		return input;
 	}
 
 	private readonly cache = new Map<string, string[]>();
@@ -343,4 +403,15 @@ export class DeprecationsScanner {
 		const rawEnd = end < visibleToRaw.length ? visibleToRaw[end] : line.length;
 		return `${line.slice(0, rawStart)}\x1B[30;47m${line.slice(rawStart, rawEnd)}\x1B[m${line.slice(rawEnd)}`;
 	}
+}
+
+if (process.argv[2] == DeprecationsScanner.workerFlag && resolve(process.argv[1] || '') == fileURLToPath(import.meta.url)) {
+	DeprecationsScanner.runWorker().catch(error => {
+		const message: WorkerErrorMessage = {
+			kind: 'error',
+			message: error instanceof Error ? error.stack || error.message : String(error)
+		};
+		process.stdout.write(`${JSON.stringify(message)}\n`);
+		process.exitCode = 1;
+	});
 }
