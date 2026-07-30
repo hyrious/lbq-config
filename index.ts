@@ -387,13 +387,22 @@ export default function install(register: RegisterFunction) {
 
 		let model = str(args, ['m', 'model']) || ''
 		let system = str(args, ['s', 'system']) || ''
+		let level = str(args, ['l', 'level']) || ''
 		let raw = bool(args, ['r', 'raw'])
 		let content = args.join(' ')
 
 		if (!content) {
-			console.log('Usage: llm [-r] [-m=model] [-s=system_prompt] "3.9 and 3.11 which is bigger"')
+			console.log('Usage: llm [-r] [-m=model] [-s=system_prompt] [-l=low|medium|max_tokens] "3.9 and 3.11 which is bigger"')
 			return
 		}
+
+		let max_tokens = 0
+		if (level[0] == 'l') max_tokens = 256;
+		else if (level[0] == 'm') max_tokens = 1024;
+		else if (Number.isSafeInteger((max_tokens = Number.parseInt(level, 10))) && max_tokens > 0) max_tokens;
+		else max_tokens = 2048;
+
+		if (max_tokens < 2024) system = `Keep your answer below ${max_tokens} tokens.${system}`;
 
 		const { parseServerSentEvents } = await import('parse-sse')
 		const configs = await import('./private/llm.json', { with: { type: 'json' } }).then(mod => mod.default) as unknown as {
@@ -425,7 +434,7 @@ export default function install(register: RegisterFunction) {
 			body: JSON.stringify({
 				model: config.model,
 				messages,
-				max_tokens: 2048,
+				max_tokens,
 				temperature: 0.2,
 				...config.extra,
 				stream_options: { include_usage: true },
