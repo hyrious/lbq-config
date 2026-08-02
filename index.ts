@@ -5,12 +5,13 @@ import { createReadStream, existsSync, globSync, mkdirSync, readFileSync, rename
 import { basename, dirname, join } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import { spawnSync } from 'node:child_process';
 import { setTimeout } from 'node:timers/promises';
 import { createHash } from 'node:crypto';
+import { styleText } from 'node:util';
+import { execFileSync } from 'node:child_process';
 
 import spawn from 'nano-spawn';
-import { bool, getErrorMessage, hostname, RegisterFunction, showTable, tryUnescape, str } from './lib/base';
+import { bool, getErrorMessage, hostname, RegisterFunction, showTable, tryUnescape, str, asNumber, spawnError } from './lib/base';
 import { taze } from './lib/taze';
 import { download, unzip } from './lib/download';
 import { scanBrokenNodeModules } from './lib/scanNodeModules';
@@ -249,9 +250,13 @@ export default function install(register: RegisterFunction) {
 		}
 	}, 'Search package from winget and install')
 
-	function resolveCodexTrustTarget(): string {
-		const result = spawnSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' })
-		return result.status === 0 ? result.stdout.trim() : process.cwd()
+	async function resolveCodexTrustTarget(): Promise<string> {
+		try {
+			const result = await spawn('git', ['rev-parse', '--show-toplevel'])
+			return result.stdout.trim()
+		} catch {
+			return process.cwd()
+		}
 	}
 
 	function rewriteCodexProjects(configPath: string, target: string): void {
@@ -281,18 +286,26 @@ export default function install(register: RegisterFunction) {
 	register('codex', async (_, ...args) => {
 		const configDir = join(homedir(), '.codex')
 		const configPath = join(configDir, 'config.toml')
-		const target = resolveCodexTrustTarget()
+		const target = await resolveCodexTrustTarget()
 		mkdirSync(configDir, { recursive: true })
 		rewriteCodexProjects(configPath, target)
 
-		const codexArgs = args.includes('--yolo') || args.includes('--dangerously-bypass-approvals-and-sandbox')
-			? args
-			: ['--yolo', ...args]
-		const result = spawnSync('codex', codexArgs, {
-			stdio: 'inherit',
-			env: { ...process.env, RUST_LOG: process.env.RUST_LOG ?? 'warn', HTTPS_PROXY: 'http://localhost:7890' },
-		})
-		process.exitCode ||= result.status ?? 1
+		if (!args.includes('--yolo') && !args.includes('--dangerously-bypass-approvals-and-sandbox'))
+			args = ['--yolo', ...args]
+		const env = { ...process.env, RUST_LOG: process.env.RUST_LOG ?? 'warn', HTTPS_PROXY: 'http://localhost:7890' }
+
+		if (!win32 && typeof process.execve == 'function') {
+			try { process.execve('codex', args, env) } catch {}
+		}
+
+		try {
+			execFileSync('codex', args, { stdio: 'inherit', env })
+		} catch (e) {
+			if (e.status)
+				process.exitCode = e.status
+			else
+				throw e
+		}
 	}, 'Trust current repo for Codex, then run codex --yolo')
 
 	async function newBranchName() {
@@ -373,9 +386,9 @@ export default function install(register: RegisterFunction) {
 	}, 'Move app window to a screen anchor, e.g. move "iTerm2" br 710 455 front')
 
 	if (macOS) register('restart', async (_, input) => {
-		spawnSync('osascript', ['-e', `quit app ${JSON.stringify(input)}`], { stdio: 'inherit' });
+		execFileSync('osascript', ['-e', `quit app ${JSON.stringify(input)}`], { stdio: 'inherit' });
 		await setTimeout(1500)
-		spawnSync('osascript', ['-e', `tell app ${JSON.stringify(input)} to launch`], { stdio: 'inherit' });
+		execFileSync('osascript', ['-e', `tell app ${JSON.stringify(input)} to launch`], { stdio: 'inherit' });
 	}, 'Restart app')
 
 	register('llm', async (_, ...args) => {
@@ -505,7 +518,7 @@ export default function install(register: RegisterFunction) {
 		function getBalance(data: any): string {
 			// DeepSeek
 			if (Array.isArray(data?.balance_infos)) {
-				return data.balance_infos.map(b => `${b.total_balance} ${b.currency}`).join(', ')
+				return data.balance_infos.map((b: any) => `${b.total_balance} ${b.currency}`).join(', ')
 			}
 			// No other for now
 			return data && typeof data == 'string' ? data : JSON.stringify(data)
@@ -529,7 +542,7 @@ export default function install(register: RegisterFunction) {
 
 	register('tsc', async (_, ...includes: string[]) => {
 		const watch = bool(includes, ['w', 'watch'])
-		let files = globSync('**/tsconfig.json', { exclude: ['node_modules', 'scripts'] })
+		let files = globSync('**/tsconfig.json', { exclude: ['node_modules'] })
 		if (includes.length) {
 			files = files.filter(p => includes.some(a => p.includes(a)))
 		}
@@ -554,19 +567,22 @@ export default function install(register: RegisterFunction) {
 			}
 			files = response
 		}
+		const tsc = win32 ? 'tsc.cmd' : 'tsc'
+		await spawn(tsc, ['--version'], { stdio: 'inherit' })
 		for (const file of files) {
 			const args = ['--noEmit', '-p', file]
 			if (watch) args.push('--watch')
 			console.log(`$ tsc ${args.join(' ')}`)
-			const result = spawnSync('tsc', args, { stdio: 'inherit' })
-			process.exitCode ||= result.status
+			const result = await spawn(tsc, args, { stdio: 'inherit' }).catch(e => e as import('nano-spawn').SubprocessError)
+			console.log(styleText('gray', `[Finished in ${result.durationMs}ms]`))
+			process.exitCode ||= asNumber(result)
 		}
 	}, 'Run tsc --noEmit')
 
-	register('dev', () => {
+	register('dev', async () => {
 		const config = join(import.meta.dirname, 'tsconfig.json')
-		const result = spawnSync('tsc', ['--noEmit', '-p', config, '-w'], { stdio: 'inherit' })
-		process.exitCode ||= result.status
+		const result = await spawn('tsc', ['--noEmit', '-p', config, '-w'], { stdio: 'inherit' }).catch(spawnError)
+		process.exitCode ||= asNumber(result)
 	}, `Watch type issues in ${import.meta.dirname}`)
 
 	register('deprecate', async (_, ...args: string[]) => {

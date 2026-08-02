@@ -1,3 +1,5 @@
+import type { SubprocessError } from 'nano-spawn';
+
 export type RegisterFunction = {
 	(pattern: string | RegExp, run: (arg: RegExpMatchArray, ...args: string[]) => unknown, description?: string): void;
 	(pattern: string | RegExp, pattern2: string | RegExp, run: (arg: RegExpMatchArray, arg2: RegExpMatchArray, ...args: string[]) => unknown, description?: string): void;
@@ -102,4 +104,15 @@ export function str(argv: string[], flag: string | string[]): string | undefined
 	}
 	argv.splice(i, 1)
 	return arg.slice(flag.length + 1)
+}
+
+export function spawnError(e: unknown) {
+	return (e as SubprocessError).exitCode
+}
+
+export function asNumber(e: unknown): number {
+	if (typeof e == 'number' && e == e)
+		return e
+	else
+		return 0
 }
