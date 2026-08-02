@@ -618,6 +618,7 @@ export default function install(register: RegisterFunction) {
 	register('ghproxy', () => {
 		const file = join(homedir(), '.gitconfig')
 		let text = readFileSync(file, 'utf8'), i = 0, j = 0, config = '', proxy = false
+		let crlf = text.includes('\r')
 		if ((i = text.indexOf('[http "https://github.com')) >= 0) {
 			j = text.indexOf('[', i + 1)
 			if (j < 0) j = text.length;
@@ -626,7 +627,8 @@ export default function install(register: RegisterFunction) {
 				config = text.slice(i, j).replaceAll('# ', '')
 				proxy = true
 			} else if (i === 0 || text[i - 1] === '\n') {
-				config = text.slice(i, j).trimEnd().replace(/^/gm, '# ') + (text.includes('\r') ? '\r\n' : '\n')
+				config = text.slice(i, j).trimEnd().replace(/\r/g, '').replace(/^/gm, '# ') + '\n'
+				if (crlf) config = config.replace(/\n/g, '\r\n')
 				proxy = false
 			} else {
 				throw new Error('not found the config')
