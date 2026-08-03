@@ -294,10 +294,6 @@ export default function install(register: RegisterFunction) {
 			args = ['--yolo', ...args]
 		const env = { ...process.env, RUST_LOG: process.env.RUST_LOG ?? 'warn', HTTPS_PROXY: 'http://localhost:7890' }
 
-		if (!win32 && typeof process.execve == 'function') {
-			try { process.execve('codex', args, env) } catch {}
-		}
-
 		try {
 			execFileSync('codex', args, { stdio: 'inherit', env })
 		} catch (e) {
