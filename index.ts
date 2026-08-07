@@ -259,7 +259,7 @@ export default function install(register: RegisterFunction) {
 		}
 	}
 
-	function rewriteCodexProjects(configPath: string, target: string): void {
+	function rewriteCodexProjects(configPath: string, target: string): boolean {
 		const source = existsSync(configPath) ? readFileSync(configPath, 'utf8').replace(/\r\n/g, '\n') : ''
 		const lines = source.split('\n')
 		const kept: string[] = []
@@ -281,6 +281,7 @@ export default function install(register: RegisterFunction) {
 		const pathLiteral = JSON.stringify(target)
 		const projectBlock = `[projects.${pathLiteral}]\ntrust_level = "trusted"\n`
 		writeFileSync(configPath, `${content}${content ? '\n\n' : ''}${projectBlock}`)
+		return source.includes('model_provider =')
 	}
 
 	register('codex', async (_, ...args) => {
@@ -288,11 +289,12 @@ export default function install(register: RegisterFunction) {
 		const configPath = join(configDir, 'config.toml')
 		const target = await resolveCodexTrustTarget()
 		mkdirSync(configDir, { recursive: true })
-		rewriteCodexProjects(configPath, target)
+		const customProvider = rewriteCodexProjects(configPath, target)
 
 		if (!args.includes('--yolo') && !args.includes('--dangerously-bypass-approvals-and-sandbox'))
 			args = ['--yolo', ...args]
-		const env = { ...process.env, RUST_LOG: process.env.RUST_LOG ?? 'warn', HTTPS_PROXY: 'http://localhost:7890' }
+		const env: Record<string, string> = { ...process.env, RUST_LOG: process.env.RUST_LOG ?? 'warn' }
+		if (!customProvider) env.HTTPS_PROXY = 'http://localhost:7890'
 
 		try {
 			execFileSync('codex', args, { stdio: 'inherit', env })
