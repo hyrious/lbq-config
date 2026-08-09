@@ -654,4 +654,40 @@ export default function install(register: RegisterFunction) {
 			throw new Error('not found the config file')
 		}
 	}, 'Toggle .gitconfig proxy settings')
+
+	register('cargo', async () => {
+		const deps: string[] = []
+		{
+			let s = readFileSync('Cargo.toml', 'utf-8').split('[dependencies]')[1]
+			let i = s.indexOf('\n[')
+			if (i > 0) s = s.slice(0, i);
+			for (let [_, dep] of s.matchAll(/^(\S+) =/gm)) {
+				deps.push(dep)
+			}
+		}
+		process.stdout.write('Checking deps: ' + deps.join(', '))
+		const result = await spawn('git', ['diff', 'Cargo.lock'])
+		const lines = result.output.trimEnd().split(/\r?\n/g)
+		if (lines.length < 3) {
+			console.log('Run `cargo update` first.')
+			return
+		}
+		process.stdout.write('\r\x1B[2K')
+		showTable(table => {
+			let name = '', version = ''
+			for (const line of lines) {
+				if (line.startsWith('[[package')) {
+					name = version = ''
+				} else if (line.startsWith(' name = "')) {
+					name = line.slice(9, -1)
+				} else if (line.startsWith('+version = "')) {
+					version = line.slice(12, -1)
+					if (deps.includes(name)) {
+						table.push([name, version])
+					}
+					name = version = ''
+				}
+			}
+		})
+	}, 'List changed dependencies after cargo update')
 }
