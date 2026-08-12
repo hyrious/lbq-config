@@ -4,7 +4,7 @@ import type { Node } from 'typescript/unstable/ast';
 import { globSync, readFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import { dirname, relative, resolve } from 'node:path';
+import { dirname, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 type TypeScriptVersionModule = typeof import('typescript');
@@ -59,13 +59,15 @@ type WorkerMessage = WorkerResultMessage | WorkerErrorMessage;
 
 export class DeprecationsScanner {
 	readonly cwd: string;
+	readonly includedPaths: readonly string[];
 
-	constructor(cwd: string = process.cwd()) {
+	constructor(cwd: string = process.cwd(), includedPaths: readonly string[] = []) {
 		this.cwd = cwd;
+		this.includedPaths = includedPaths.map(path => resolve(cwd, path));
 	}
 
-	private static readonly deprecatedMessage = 'Deprecated API';
 	static readonly workerFlag = '--scan-deprecations-worker';
+	private static readonly deprecatedMessage = 'Deprecated API';
 	private static readonly sgrPattern = /\x1B\[[0-9;]*m/g;
 	private static readonly identifierStartPattern = /[$_\p{ID_Start}]/u;
 	private static readonly identifierPartPattern = /[$_\u200C\u200D\p{ID_Continue}]/u;
@@ -142,7 +144,14 @@ export class DeprecationsScanner {
 		const api = new ts.sync.API({ cwd: this.cwd });
 		try {
 			return api.parseConfigFile(configPath).fileNames.filter(fileName => {
-				return DeprecationsScanner.sourceFilePattern.test(fileName) && !DeprecationsScanner.declarationFilePattern.test(fileName);
+				if (!DeprecationsScanner.sourceFilePattern.test(fileName) || DeprecationsScanner.declarationFilePattern.test(fileName)) {
+					return false;
+				}
+				if (!this.includedPaths.length) {
+					return true;
+				}
+				const resolvedFileName = resolve(this.cwd, fileName);
+				return this.includedPaths.some(path => resolvedFileName == path || resolvedFileName.startsWith(path + sep));
 			});
 		} catch (error) {
 			console.error(`Failed to parse ${configPath}: ${error instanceof Error ? error.message : String(error)}`);
@@ -253,6 +262,14 @@ export class DeprecationsScanner {
 				continue;
 			}
 			const position = sourceFile.getLineAndCharacterOfPosition(diagnostic.pos);
+			if (0 < position.line) {
+				const previousLineStart = sourceFile.getPositionOfLineAndCharacter(position.line - 1, 0);
+				const currentLineStart = sourceFile.getPositionOfLineAndCharacter(position.line, 0);
+				const previousLine = sourceFile.text.slice(previousLineStart, currentLineStart).trimStart();
+				if (previousLine.startsWith('// @ts-ignore')) {
+					continue;
+				}
+			}
 			const deprecation: Deprecation = {
 				projectPath,
 				file: relative(projectPath, sourceFile.fileName),
