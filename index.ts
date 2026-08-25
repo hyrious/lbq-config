@@ -585,7 +585,8 @@ export default function install(register: RegisterFunction) {
 
 	register('deprecate', async (_, ...args: string[]) => {
 		const silent = bool(args, ['-s', '--silent'])
-		const scanner = new DeprecationsScanner(process.cwd(), args)
+		const exclude = str(args, '--exclude')
+		const scanner = new DeprecationsScanner(process.cwd(), args, exclude)
 		const { highlight } = await import('@babel/code-frame')
 		const progress = new ProgressLine(process.stderr)
 		try {

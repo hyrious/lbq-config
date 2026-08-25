@@ -37,6 +37,7 @@ interface WorkerRequest {
 	readonly cwd: string;
 	readonly configPath: string;
 	readonly files: readonly string[];
+	readonly exclude: string | null;
 }
 
 interface WorkerFileResult {
@@ -60,10 +61,20 @@ type WorkerMessage = WorkerResultMessage | WorkerErrorMessage;
 export class DeprecationsScanner {
 	readonly cwd: string;
 	readonly includedPaths: readonly string[];
+	readonly exclude: string | null;
+	private readonly excludePattern: RegExp | null;
+	private readonly excludeStrings: readonly string[];
 
-	constructor(cwd: string = process.cwd(), includedPaths: readonly string[] = []) {
+	constructor(cwd: string = process.cwd(), includedPaths: readonly string[] = [], exclude: string | null = null) {
 		this.cwd = cwd;
 		this.includedPaths = includedPaths.map(path => resolve(cwd, path));
+		this.exclude = exclude;
+		this.excludePattern = exclude?.startsWith('/') && exclude.endsWith('/')
+			? new RegExp(exclude.slice(1, -1))
+			: null;
+		this.excludeStrings = exclude && !this.excludePattern
+			? exclude.split(',').map(text => text.trim()).filter(Boolean)
+			: [];
 	}
 
 	static readonly workerFlag = '--scan-deprecations-worker';
@@ -133,7 +144,7 @@ export class DeprecationsScanner {
 
 		for (let index = 0; index < files.length; index += batchSize) {
 			const batch = files.slice(index, index + batchSize);
-			for await (const result of this.scanWorkerBatch({ cwd: this.cwd, configPath, files: batch })) {
+			for await (const result of this.scanWorkerBatch({ cwd: this.cwd, configPath, files: batch, exclude: this.exclude })) {
 				scanned++;
 				yield { ...result, scanned, total };
 			}
@@ -270,12 +281,21 @@ export class DeprecationsScanner {
 					continue;
 				}
 			}
+			const lineStart = sourceFile.getPositionOfLineAndCharacter(position.line, 0);
+			const lineBreak = sourceFile.text.indexOf('\n', lineStart);
+			const lineEnd = lineBreak < 0 ? sourceFile.text.length : lineBreak;
+			const sourceLine = sourceFile.text.slice(lineStart, lineEnd);
+			const markedText = DeprecationsScanner.getMarkedText(sourceLine, position.character + 1);
+			if (this.isExcluded(markedText)) {
+				continue;
+			}
+			const message = this.getDiagnosticMessage(diagnostic, project, ts).replaceAll(/\s+/g, ' ').trim();
 			const deprecation: Deprecation = {
 				projectPath,
 				file: relative(projectPath, sourceFile.fileName),
 				line: position.line + 1,
 				character: position.character + 1,
-				message: this.getDiagnosticMessage(diagnostic, project, ts).replaceAll(/\s+/g, ' ').trim()
+				message
 			};
 			const key = `${deprecation.file}:${deprecation.line}:${deprecation.character}:${deprecation.message}`;
 			if (!seen.has(key)) {
@@ -288,6 +308,12 @@ export class DeprecationsScanner {
 			file: relative(projectPath, sourceFile.fileName),
 			deprecations
 		};
+	}
+
+	private isExcluded(text: string): boolean {
+		return this.excludePattern
+			? this.excludePattern.test(text)
+			: this.excludeStrings.some(exclude => text.includes(exclude));
 	}
 
 	private getDiagnosticMessage(diagnostic: Diagnostic, project: Project, ts: TypeScriptModules): string {
@@ -327,7 +353,7 @@ export class DeprecationsScanner {
 	static async runWorker(): Promise<void> {
 		const input = await DeprecationsScanner.readStdin();
 		const request = JSON.parse(input) as WorkerRequest;
-		const scanner = new DeprecationsScanner(request.cwd);
+		const scanner = new DeprecationsScanner(request.cwd, [], request.exclude);
 		const results = await scanner.scanBatchInCurrentProcess(request);
 		for (const result of results) {
 			const message: WorkerResultMessage = { kind: 'result', result };
@@ -388,6 +414,16 @@ export class DeprecationsScanner {
 			end++;
 		}
 		return end;
+	}
+
+	private static getMarkedText(line: string, character: number): string {
+		const start = character - 1;
+		if (start < 0 || line.length <= start) {
+			return '';
+		}
+		const visibleToRaw = Array.from({ length: line.length }, (_, index) => index);
+		const end = DeprecationsScanner.getMarkedVisibleEnd(line, visibleToRaw, start);
+		return line.slice(start, end);
 	}
 
 	mark(line: string, character: number): string {
