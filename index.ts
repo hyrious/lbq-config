@@ -11,6 +11,7 @@ import { styleText } from 'node:util';
 import { execFileSync } from 'node:child_process';
 
 import spawn from 'nano-spawn';
+import tildify from 'tildify';
 import { bool, getErrorMessage, hostname, RegisterFunction, showTable, tryUnescape, str, asNumber, spawnError } from './lib/base';
 import { taze } from './lib/taze';
 import { download, unzip } from './lib/download';
@@ -63,6 +64,7 @@ export default function install(register: RegisterFunction) {
 	const win32 = process.platform == 'win32'
 	const macOS = process.platform == 'darwin'
 	const mirror = 'https://mirrors.tuna.tsinghua.edu.cn'
+	const here = tildify(import.meta.dirname)
 
 	register('iosevka', async (_, ...args) => {
 		const table = await Promise.all(['Iosevka', 'Sarasa-Gothic'].map(async name => {
@@ -128,7 +130,7 @@ export default function install(register: RegisterFunction) {
 		console.log('Updating...')
 		await spawn('git', ['pull', '--ff-only'], { cwd: import.meta.dirname, stdio: 'inherit' })
 		await spawn('pnpm', ['install'], { cwd: import.meta.dirname, stdio: 'inherit' })
-	}, 'Run git pull in ' + import.meta.dirname)
+	}, 'Run git pull in ' + here)
 
 	register('taze', async (_, ...args) => {
 		const { Spinner } = await import('picospinner')
@@ -581,7 +583,7 @@ export default function install(register: RegisterFunction) {
 		const config = join(import.meta.dirname, 'tsconfig.json')
 		const result = await spawn('tsc', ['--noEmit', '-p', config, '-w'], { stdio: 'inherit' }).catch(spawnError)
 		process.exitCode ||= asNumber(result)
-	}, `Watch type issues in ${import.meta.dirname}`)
+	}, `Watch type issues in ${here}`)
 
 	register('deprecate', async (_, ...args: string[]) => {
 		const silent = bool(args, ['-s', '--silent'])
