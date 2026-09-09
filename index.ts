@@ -383,7 +383,7 @@ export default function install(register: RegisterFunction) {
 			throw new Error(`Invalid height: ${height}`)
 		}
 		await moveWindow(appName, anchor, nextWidth, nextHeight, w)
-	}, 'Move app window to a screen anchor, e.g. move "iTerm2" br 710 455 front')
+	}, 'Move app window, e.g. move "iTerm2" br 710 455 front')
 
 	if (macOS) register('restart', async (_, input) => {
 		execFileSync('osascript', ['-e', `quit app ${JSON.stringify(input)}`], { stdio: 'inherit' });
@@ -698,4 +698,14 @@ export default function install(register: RegisterFunction) {
 			}
 		})
 	}, 'List changed dependencies after cargo update')
+
+	if (macOS) register('chrome', async (_, ...args) => {
+		const test = bool(args, ['-t', '--test'])
+		const yolo = bool(args, ['--yolo', '--danger'])
+		const chrome = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+		const chromeArgs: string[] = ['--disable-fre', '--no-first-run', '--window-size=1152,720']
+		if (test) chromeArgs.push('--user-data-dir=/tmp/test-chrome-profile-dir');
+		if (yolo) chromeArgs.push('--disable-web-security');
+		await spawn(chrome, chromeArgs, { stdio: 'inherit' })
+	}, 'Open chrome, --test to use temp data dir, --yolo to bypass cors')
 }
