@@ -17,7 +17,7 @@ import { taze } from './lib/taze';
 import { download, unzip } from './lib/download';
 import { scanBrokenNodeModules } from './lib/scanNodeModules';
 import { renderMarkdownStream } from './lib/renderMarkdownStream';
-import { collectOpenAIChatStream, normalizeLlmUsage, pruneLlmLogs, writePiStyleLlmLog, type LlmStreamResult } from './lib/llm';
+import { collectOpenAIChatStream, normalizeLlmUsage, pruneLlmLogs, readLlmSession, writePiStyleLlmLog, type LlmMessage, type LlmStreamResult } from './lib/llm';
 import { DeprecationsScanner } from './lib/scanDeprecations';
 import { moveWindow } from './lib/moveWindow';
 
@@ -399,13 +399,15 @@ export default function install(register: RegisterFunction) {
 		}
 
 		let model = str(args, ['m', 'model']) || ''
+		let sessionId = str(args, ['c', 'continue']) || ''
 		let system = str(args, ['s', 'system']) || ''
 		let level = str(args, ['l', 'level']) || ''
 		let raw = bool(args, ['r', 'raw'])
 		let content = args.join(' ')
 
 		if (!content) {
-			console.log('Usage: llm [-r] [-m=model] [-s=system_prompt] [-l=low|medium|max_tokens] "3.9 and 3.11 which is bigger"')
+			console.log('Usage: llm [-r] [-c id] [-m=model] [-s=system_prompt] [-l=low|medium|max_tokens] "3.9 and 3.11 which is bigger"')
+			console.log('  -c, --continue id: Continue private/llm-<id>.jsonl; ignores system prompts.')
 			return
 		}
 
@@ -416,6 +418,9 @@ export default function install(register: RegisterFunction) {
 		else max_tokens = 2048;
 
 		if (max_tokens < 2024) system = `Keep your answer below ${max_tokens} tokens.${system}`;
+		const logDir = join(import.meta.dirname, 'private')
+		const session = sessionId ? readLlmSession(logDir, sessionId) : undefined
+		if (session) system = ''
 
 		const { parseServerSentEvents } = await import('parse-sse')
 		const configs = await import('./private/llm.json', { with: { type: 'json' } }).then(mod => mod.default) as unknown as {
@@ -434,7 +439,8 @@ export default function install(register: RegisterFunction) {
 			return
 		}
 
-		const messages = [{ role: 'user', content }]
+		const messages: LlmMessage[] = [{ role: 'user', content }]
+		if (session?.messages) messages.unshift(...session.messages)
 		if (system) messages.unshift({ role: 'system', content: system })
 
 		// baseUrl should be compatible with /chat/completions
@@ -472,13 +478,12 @@ export default function install(register: RegisterFunction) {
 		)
 		if (raw) for await (const chunk of responseStream) process.stdout.write(chunk)
 		else await renderMarkdownStream(responseStream);
-		const logDir = join(import.meta.dirname, 'private')
 		const logFile = writePiStyleLlmLog(logDir, {
 			model: config.model,
 			system,
 			content,
 			...streamResult,
-		})
+		}, session)
 
 		if (streamResult.usage) {
 			let extra = ''
