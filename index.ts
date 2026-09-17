@@ -709,4 +709,34 @@ export default function install(register: RegisterFunction) {
 		if (yolo) chromeArgs.push('--disable-web-security');
 		await spawn(chrome, chromeArgs, { stdio: 'inherit' })
 	}, 'Open chrome, --test to use temp data dir, --yolo to bypass cors')
+
+	register('cors', async (_, ...args) => {
+		function help() {
+			console.log([
+				'Usage: lbq cors [method] <url> <origin> [...headers]',
+				'Example: `lbq cors POST https://api.example.com/api https://example.com x-custom-field` will send:',
+				'  OPTIONS https://api.example.com/api',
+				'  Origin: https://example.com',
+				'  Access-Control-Request-Method: POST',
+				'  Access-Control-Request-Headers: x-custom-field',
+			].join('\n'))
+		}
+		if (bool(args, ['-h', '--help']) || args.length < 2) return help();
+		let method: string, url: string, origin: string, headers: string[]
+		let a = args.shift()!
+		if (/^https?:\/\//iu.test(a)) {
+			method = 'GET'
+			url = a
+		} else {
+			method = a
+			url = args.shift()!
+		}
+		origin = args.shift()!
+		headers = args
+		const xh_args = ['options', url, `origin:${origin}`,
+			`access-control-request-method:${method}`,
+			`access-control-request-headers:${headers.join(',')}`]
+		console.log(`$ xh ${xh_args.join(' ')}`)
+		await spawn('xh', xh_args, { stdio: 'inherit' })
+	}, 'Test CORS headers')
 }
