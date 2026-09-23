@@ -546,6 +546,7 @@ export default function install(register: RegisterFunction) {
 	}, 'Delete node_modules/.pkg-hash files after a broken install')
 
 	register('tsc', async (_, ...includes: string[]) => {
+		const yes = bool(includes, ['y', 'yes'])
 		const watch = bool(includes, ['w', 'watch'])
 		let files = globSync('**/tsconfig.json', { exclude: ['node_modules'] })
 		if (includes.length) {
@@ -556,21 +557,23 @@ export default function install(register: RegisterFunction) {
 			return
 		}
 		const { confirm, multiselect, isCancel } = await import('@clack/prompts')
-		if (files.length === 1) {
-			const response = await confirm({ message: `Run \$ tsc --noEmit -p ${files[0]} ?` })
-			if (!response || isCancel(response)) {
-				return
+		if (!yes) {
+			if (files.length === 1) {
+				const response = await confirm({ message: `Run \$ tsc --noEmit -p ${files[0]} ?` })
+				if (!response || isCancel(response)) {
+					return
+				}
+			} else {
+				const response = await multiselect({
+					message: 'Select one or more projects to run ts check',
+					options: files.map(e => ({ label: e, value: e })),
+					initialValues: files
+				})
+				if (isCancel(response) || !response.length) {
+					return;
+				}
+				files = response
 			}
-		} else {
-			const response = await multiselect({
-				message: 'Select one or more projects to run ts check',
-				options: files.map(e => ({ label: e, value: e })),
-				initialValues: files
-			})
-			if (isCancel(response) || !response.length) {
-				return;
-			}
-			files = response
 		}
 		const tsc = win32 ? 'tsc.cmd' : 'tsc'
 		await spawn(tsc, ['--version'], { stdio: 'inherit' })
