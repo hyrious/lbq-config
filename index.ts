@@ -331,8 +331,9 @@ export default function install(register: RegisterFunction) {
 		await pqueue(4, sessions, (session) => spawn('codex', ['delete', '--force', session], { stdio: 'inherit' }))
 		releases.forEach((path) => {
 			rmSync(path, { recursive: true, force: true })
-			console.log('Deleted daemon', path)
+			console.log('Deleted daemon', tildify(path))
 		})
+		await spawn('lbq', ['codex', 'app-server', 'daemon', 'start'])
 
 		const after = await spawn('du', ['-sh', codexHome]).then(s => s.output.split('\t')[0])
 		console.log(`Done. ~/.codex: ${before} -> ${after}`)
