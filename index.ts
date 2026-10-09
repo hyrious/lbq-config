@@ -1,7 +1,7 @@
 /// <reference types="node" />
 
 import { homedir, tmpdir } from 'node:os';
-import { createReadStream, existsSync, globSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { createReadStream, existsSync, globSync, mkdirSync, readdirSync, readFileSync, readlinkSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -307,6 +307,47 @@ export default function install(register: RegisterFunction) {
 				throw e
 		}
 	}, 'Trust current repo for Codex, then run codex --yolo')
+
+	register('codex', 'clean', async () => {
+		await spawn('codex', ['app-server', 'daemon', 'stop'])
+		const codexHome = join(homedir(), '.codex')
+		const before = await spawn('du', ['-sh', codexHome]).then(s => s.output.split('\t')[0])
+		const result = await spawn('sqlite3', ['-readonly', join(codexHome, 'state_5.sqlite'), 'SELECT id FROM threads;'])
+		const uuidre = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+		const sessions = result.output.trimEnd().split(/\r?\n/g).filter(e => uuidre.test(e))
+
+		const daemon = join(codexHome, 'packages', 'app-server-daemon')
+		const current = readlinkSync(join(daemon, 'current'))
+		const releases = readdirSync(join(daemon, 'releases')).map(e => join(daemon, 'releases', e)).filter(e => e != current)
+
+		if (!sessions.length && !releases.length) {
+			console.log('Nothing to clean.')
+			return
+		}
+
+		const { confirm, isCancel } = await import('@clack/prompts')
+		const confirmation = await confirm({ message: `Delete ${sessions.length} sessions and ${releases.length} daemons?` })
+		if (!confirmation || isCancel(confirmation)) return;
+		await pqueue(4, sessions, (session) => spawn('codex', ['delete', '--force', session], { stdio: 'inherit' }))
+		releases.forEach((path) => {
+			rmSync(path, { recursive: true, force: true })
+			console.log('Deleted daemon', path)
+		})
+
+		const after = await spawn('du', ['-sh', codexHome]).then(s => s.output.split('\t')[0])
+		console.log(`Done. ~/.codex: ${before} -> ${after}`)
+	}, 'Delete codex sessions and stale app-server daemon')
+
+	async function pqueue<T>(limit: number, arr: readonly T[], fn: (a: T) => Promise<unknown>) {
+		let next = 0
+		async function worker() {
+			while (next < arr.length) {
+				const i = next++
+				await fn(arr[i])
+			}
+		}
+		await Promise.all(Array.from({ length: limit }, worker))
+	}
 
 	async function newBranchName() {
 		const { uniqueNamesGenerator, adjectives, animals } = await import('@joaomoreno/unique-names-generator')
