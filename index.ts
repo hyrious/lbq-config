@@ -572,6 +572,51 @@ export default function install(register: RegisterFunction) {
 		}
 	}, 'Mini LLM client')
 
+	const TRANSLATE_LANG_NAMES: Record<string, string> = {
+		en: '英语', zh: '中文', de: '德语', fr: '法语', es: '西班牙语',
+		ja: '日语', ko: '韩语', pt: '葡萄牙语', ru: '俄语', ar: '阿拉伯语',
+		it: '意大利语', nl: '荷兰语', pl: '波兰语', ro: '罗马尼亚语',
+		sv: '瑞典语', tr: '土耳其语', hi: '印地语', vi: '越南语',
+		th: '泰语', id: '印尼语', ms: '马来语', fil: '菲律宾语',
+	}
+
+	function buildTranslatePrompt(text: string, target: string): string {
+		const name = TRANSLATE_LANG_NAMES[target.toLowerCase()] ?? target
+		return `请将以下文本翻译为${name}，直接输出翻译结果，不要进行任何解释。\n\n${text}`
+	}
+
+	register(/^(tr|translate)$/, async (_, ...args) => {
+		const target = str(args, ['t', 'target']) || 'en'
+		const text = args.join(' ').trim()
+		if (!text) {
+			console.log('Usage: translate [-t lang] <text>')
+			console.log('  -t, --target: target language code (default: en), e.g. en/zh/ja')
+			return
+		}
+
+		const { parseServerSentEvents } = await import('parse-sse')
+		const response = await fetch('https://index-translate.bilibili.com/v1/chat/completions', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: 'Index-Translate-35B-A3B',
+				messages: [{ role: 'user', content: buildTranslatePrompt(text, target) }],
+				max_tokens: 1024,
+				temperature: 0,
+				chat_template_kwargs: { enable_thinking: false },
+				stream: true,
+			}),
+		})
+		if (!response.ok) {
+			throw new Error(await response.text())
+		}
+
+		const result: LlmStreamResult = { stopReason: 'stop', assistantContent: '', reasoningContent: '', usage: undefined }
+		const stream = collectOpenAIChatStream(parseServerSentEvents(response as unknown as Response), result, false)
+		for await (const chunk of stream) process.stdout.write(chunk)
+		process.stdout.write('\n')
+	}, 'Translate text via Index-Translate')
+
 	register('fix-ni', (_, ...args: string[]) => {
 		if (!existsSync('node_modules')) {
 			console.log('This command only works in npm projects!')
