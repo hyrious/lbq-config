@@ -793,10 +793,12 @@ export default function install(register: RegisterFunction) {
 		const test = bool(args, ['-t', '--test'])
 		const test2 = bool(args, ['-tt', '--test2'])
 		const yolo = bool(args, ['--yolo', '--danger'])
+		const debug = bool(args, ['-d', '--debug', '--debugger'])
 		const chrome = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 		const chromeArgs: string[] = ['--disable-fre', '--no-first-run', '--window-size=1152,720']
 		if (test || test2) chromeArgs.push('--user-data-dir=/tmp/test-chrome-profile-dir' + (test2 ? '2' : ''));
 		if (yolo) chromeArgs.push('--disable-web-security');
+		if (debug) chromeArgs.push('--remote-debugging-port=9222')
 		await spawn(chrome, chromeArgs, { stdio: 'inherit' })
 	}, 'Open chrome, --test to use temp data dir, --yolo to bypass cors')
 
