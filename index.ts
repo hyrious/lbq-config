@@ -19,7 +19,7 @@ import { scanBrokenNodeModules } from './lib/scanNodeModules';
 import { renderMarkdownStream } from './lib/renderMarkdownStream';
 import { collectOpenAIChatStream, normalizeLlmUsage, pruneLlmLogs, readLlmSession, writePiStyleLlmLog, type LlmMessage, type LlmStreamResult } from './lib/llm';
 import { DeprecationsScanner } from './lib/scanDeprecations';
-import { moveWindow } from './lib/moveWindow';
+import { moveWindow, resizeDevToolsWindows } from './lib/moveWindow';
 
 class ProgressLine {
 	private readonly stream: NodeJS.WriteStream;
@@ -426,6 +426,15 @@ export default function install(register: RegisterFunction) {
 		}
 		await moveWindow(appName, anchor, nextWidth, nextHeight, w)
 	}, 'Move app window, e.g. move "iTerm2" br 710 455 front')
+
+	if (macOS) register('move', 'devtools', async (_, __, width = '800', height = '400', ...args) => {
+		if (args.length) throw new Error('Usage: move devtools [width] [height]')
+		const nextWidth = Number(width)
+		const nextHeight = Number(height)
+		if (!Number.isFinite(nextWidth) || nextWidth <= 0) throw new Error(`Invalid width: ${width}`)
+		if (!Number.isFinite(nextHeight) || nextHeight <= 0) throw new Error(`Invalid height: ${height}`)
+		await resizeDevToolsWindows(nextWidth, nextHeight)
+	}, 'Resize Chrome DevTools in place, default size 800 x 400')
 
 	if (macOS) register('restart', async (_, input) => {
 		execFileSync('osascript', ['-e', `quit app ${JSON.stringify(input)}`], { stdio: 'inherit' });

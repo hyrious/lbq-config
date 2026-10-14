@@ -153,3 +153,23 @@ export async function moveWindow(appName: string, anchor: string, width?: number
 		return setFrame({ x, y, width: nextWidth, height: nextHeight })
 	`, [appName, anchor, width ?? null, height ?? null, window])
 }
+
+export async function resizeDevToolsWindows(width: number, height: number) {
+	const { runJxa } = await import('run-jxa')
+	const count = await runJxa(`
+		const [width, height] = args
+		const app = Application('Google Chrome')
+		if (!app.running()) throw new Error('Google Chrome is not running')
+
+		let count = 0
+		for (const win of app.windows()) {
+			if (win.title().startsWith('DevTools')) {
+				const { x, y } = win.bounds()
+				win.bounds = { x, y, width, height }
+				count++
+			}
+		}
+		return count
+	`, [width, height])
+	if (count == 0) throw new Error('No DevTools window found')
+}
