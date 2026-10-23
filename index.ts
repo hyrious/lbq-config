@@ -328,7 +328,9 @@ export default function install(register: RegisterFunction) {
 		const { confirm, isCancel } = await import('@clack/prompts')
 		const confirmation = await confirm({ message: `Delete ${sessions.length} sessions and ${releases.length} daemons?` })
 		if (!confirmation || isCancel(confirmation)) return;
-		await pqueue(4, sessions, (session) => spawn('codex', ['delete', '--force', session], { stdio: 'inherit' }))
+		for (const session of sessions) {
+			await spawn('codex', ['delete', '--force', session], { stdio: 'inherit' }).catch(() => undefined)
+		}
 		releases.forEach((path) => {
 			rmSync(path, { recursive: true, force: true })
 			console.log('Deleted daemon', tildify(path))
@@ -338,17 +340,6 @@ export default function install(register: RegisterFunction) {
 		const after = await spawn('du', ['-sh', codexHome]).then(s => s.output.split('\t')[0])
 		console.log(`Done. ~/.codex: ${before} -> ${after}`)
 	}, 'Delete codex sessions and stale app-server daemon')
-
-	async function pqueue<T>(limit: number, arr: readonly T[], fn: (a: T) => Promise<unknown>) {
-		let next = 0
-		async function worker() {
-			while (next < arr.length) {
-				const i = next++
-				await fn(arr[i])
-			}
-		}
-		await Promise.all(Array.from({ length: limit }, worker))
-	}
 
 	async function newBranchName() {
 		const { uniqueNamesGenerator, adjectives, animals } = await import('@joaomoreno/unique-names-generator')
