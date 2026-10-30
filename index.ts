@@ -831,4 +831,8 @@ export default function install(register: RegisterFunction) {
 		console.log(`$ xh ${xh_args.join(' ')}`)
 		await spawn('xh', xh_args, { stdio: 'inherit' })
 	}, 'Test CORS headers')
+
+	register('ci', async (_, ...args) => {
+		await import('./lib/ci').then(mod => mod.runCi(args))
+	}, 'Generate and run cached CI checks')
 }
