@@ -1,3 +1,0 @@
-configDependencies:
-  '@pnpm/plugin-better-defaults': 0.3.0
-  '@pnpm/plugin-trusted-deps': 0.3.0-2

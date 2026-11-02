@@ -1,320 +1,64 @@
-/// <reference types="node" />
-
-import { homedir, tmpdir } from 'node:os';
-import { createReadStream, existsSync, globSync, mkdirSync, readdirSync, readFileSync, readlinkSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { basename, dirname, join } from 'node:path';
-import { Readable } from 'node:stream';
-import { pipeline } from 'node:stream/promises';
-import { setTimeout } from 'node:timers/promises';
-import { createHash } from 'node:crypto';
+import { execFileSync, execSync } from 'node:child_process';
+import { readdirSync, readFileSync, readlinkSync, rmSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { styleText } from 'node:util';
-import { execFileSync } from 'node:child_process';
-
-import spawn from 'nano-spawn';
 import tildify from 'tildify';
-import { bool, getErrorMessage, hostname, RegisterFunction, showTable, tryUnescape, str, asNumber, spawnError } from './lib/base';
-import { taze } from './lib/taze';
-import { download, unzip } from './lib/download';
-import { scanBrokenNodeModules } from './lib/scanNodeModules';
-import { renderMarkdownStream } from './lib/renderMarkdownStream';
-import { collectOpenAIChatStream, normalizeLlmUsage, pruneLlmLogs, readLlmSession, writePiStyleLlmLog, type LlmMessage, type LlmStreamResult } from './lib/llm';
-import { DeprecationsScanner } from './lib/scanDeprecations';
-import { moveWindow, resizeDevToolsWindows } from './lib/moveWindow';
-
-class ProgressLine {
-	private readonly stream: NodeJS.WriteStream;
-	private text = ''
-
-	constructor(stream: NodeJS.WriteStream) {
-		this.stream = stream
-	}
-
-	render(text: string): void {
-		if (!this.stream.isTTY) return
-		this.text = text
-		this.stream.write(`\r\x1B[2K${text}`)
-	}
-
-	clear(): void {
-		if (!this.stream.isTTY || !this.text) return
-		this.stream.write('\r\x1B[2K')
-		this.text = ''
-	}
-
-	writeStdout(text: string): void {
-		const progressText = this.text
-		this.clear()
-		process.stdout.write(text)
-		if (progressText) {
-			this.render(progressText)
-		}
-	}
-
-	done(): void {
-		this.clear()
-	}
-}
-
-function formatPercent(scanned: number, total: number): string {
-	if (total == 0) return '100.0'
-	return (scanned / total * 100).toFixed(1)
-}
+import { bool, confirm, editFile, exec, execOrFail, readJson, str, truncate, writeJson } from './lib/base';
+import { DeprecationsScanner, ProgressLine } from './lib/scanDeprecations';
 
 export default function install(register: RegisterFunction) {
 	const win32 = process.platform == 'win32'
 	const macOS = process.platform == 'darwin'
-	const mirror = 'https://mirrors.tuna.tsinghua.edu.cn'
-	const here = tildify(import.meta.dirname)
-
-	register('iosevka', async (_, ...args) => {
-		const table = await Promise.all(['Iosevka', 'Sarasa-Gothic'].map(async name => {
-			let hashfile = `${mirror}/github-release/be5invis/${name}/LatestRelease/SHA-256.txt`
-			let content = await fetch(hashfile).then(r => r.text())
-			let line = content.split('\n').find(e => e.includes('SuperTTC'))!
-			let [hash, fileName] = line.split(/\s+/)
-			let url = dirname(hashfile) + '/' + fileName
-			return [name, hash, url]
-		}))
-		showTable(table.map(row => [row[0], row[2]]))
-		if (macOS && (args.includes('-i') || args.includes('--install'))) {
-			for (const [name, hash, url] of table) {
-				console.log('.', url)
-				const file = await download(url, join(homedir(), 'Downloads'))
-				const token = createHash('sha256')
-				await pipeline(createReadStream(file), token, { end: true })
-				const digest = token.digest('hex')
-				if (digest !== hash) {
-					console.error(`Hash mismatch for ${file}: expected ${hash}, got ${digest}`)
-					continue
-				}
-				const fontsDir = join(homedir(), 'Library', 'Fonts')
-				if (url.endsWith('.zip')) {
-					const outdir = join(tmpdir(), name)
-					await unzip(file, outdir)
-					renameSync(join(outdir, 'Iosevka.ttc'), join(fontsDir, 'Iosevka.ttc'))
-				} else if (url.endsWith('.7z')) {
-					await spawn('7z', ['x', '-o' + fontsDir, file], { stdio: 'inherit' })
-				}
-				console.log(`Installed fonts to ${fontsDir}`)
-			}
-		}
-	}, 'Print URL to the latest Iosevka & Sarasa')
-
-	if (win32) register('vcvarsall', async () => {
-		const vswhere = String.raw`C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe`
-		const vsBase = (await spawn(vswhere, ['-latest', '-property', 'installationPath'])).output.trim()
-		console.log(join(vsBase, 'vc/Auxiliary/Build/vcvarsall.bat'))
-	}, 'Find vcvarsall.bat')
-
-	register('n1', async (_, ...packages) => {
-		const tar = await import('tar')
-		for (const pkg of packages) {
-			const tarball = (await spawn('npm', ['view', pkg, 'dist.tarball'])).output.trim()
-			const response = await fetch(tarball)
-			if (response.ok && response.body) {
-				const dist = join('node_modules', pkg)
-				mkdirSync(dist, { recursive: true })
-				console.log('Polling', dist)
-				await pipeline(
-					Readable.from(response.body),
-					tar.extract({ strip: 1, cwd: dist }), { end: true }
-				)
-			} else {
-				console.error(response.statusText)
-			}
-		}
-		if (packages.length == 0) console.log('Usage: n1 [packages...]')
-	}, 'Manually download a package to node_modules')
-
-	register('update', async () => {
-		console.log('Updating...')
-		await spawn('git', ['pull', '--ff-only'], { cwd: import.meta.dirname, stdio: 'inherit' })
-		await spawn('pnpm', ['install'], { cwd: import.meta.dirname, stdio: 'inherit' })
-	}, 'Run git pull in ' + here)
-
-	register('taze', async (_, ...args) => {
-		const { Spinner } = await import('picospinner')
-		const s = new Spinner('Running taze...')
-		s.start()
-		const changes = await taze(args.includes('-g'))
-		s.succeed()
-		if (changes.length == 0) {
-			console.log('No updates.')
-			return
-		}
-		console.log()
-		showTable(table => {
-			changes.forEach(change => {
-				let name = change.name
-				let now = change.from.replace(/^[^\d]+/, '')
-				let then = change.to.replace(/^[^\d]+/, '')
-				let display = [now, win32 ? '->' : '→', then].join(' ')
-				table.push([
-					{ label: name, link: `https://hyrious.me/npm-browser/?q=${name}` },
-					change.compareUrl ? { label: display, link: change.compareUrl } : display,
-					{ label: 'diff', link: change.diffUrl }
-				])
-			})
-		})
-		console.log()
-	}, 'Show package updates and url to the diff page')
-
-	if (win32) register('nodejs', async (_, ...args) => {
-		let data = await fetch('https://registry.npmmirror.com/-/binary/node/latest/').then(r => r.json())
-		let info = data.findLast((e: { name: string }) => e.name.endsWith('-x64.msi'))
-		console.log(info.url)
-		if (args.includes('-i') || args.includes('--install')) {
-			let file = await download(info.url, join(homedir(), 'Downloads'))
-			await spawn('msiexec', ['/i', file], { stdio: 'inherit' })
-		}
-	}, 'Get latest nodejs download url')
-
-	register('nodejs-lts', async () => {
-		let data = await fetch('https://nodejs.org/dist/index.json').then(r => r.json())
-		let info = data.find((e: { lts: string | false }) => e.lts)
-		console.log(info.version)
-	}, 'Get the LTS version of Node.js')
-
-	register(/^(p|pri|priv|private)$/, async (_, ...args) => {
-		const { defineConfig } = await import('@hyrious/lbq')
-		const { default: fn } = await import('./private/index')
-		const lbq = await defineConfig(fn)
-
-		if (args[0] === '-l' || args[0] === '--list') {
-			console.log('Private actions:')
-			for (const line of lbq.list()) {
-				console.log('  ' + line)
-			}
-			return
-		}
-
-		const actionAndArgs = lbq.find(args)
-		if (!actionAndArgs) {
-			console.error('No matching action, try --list.')
-			process.exitCode = 1
-			return
-		}
-
-		const [action, matches, restArgs] = actionAndArgs
-		try {
-			await action.run(...matches, ...restArgs)
-		} catch (err) {
-			if (err && typeof err === 'object' && typeof err.stack === 'string') {
-				const { default: cleanStack } = await import('clean-stack')
-				console.error(cleanStack(err.stack))
-			} else if (err && typeof err === 'object' && typeof err.message === 'string') {
-				console.error(err.message)
-			} else {
-				console.error(err)
-			}
-			process.exitCode = 1
-		}
-	}, 'Pass arguments to private LBQ commands')
-
-	if (win32) register('get', async (_, input) => {
-		if (!input.startsWith('https://')) {
-			const output = (await spawn('winget', ['show', input, '--source', 'winget'])).stdout
-			// WinGet does not provide parsable output [https://github.com/microsoft/winget-cli/issues/1753].
-			// So let's search common languages by hand [https://github.com/search?q=repo%3Amicrosoft%2Fwinget-cli+name%3D%22ShowLabelInstallerUrl%22&type=code].
-			const ShowLabelInstallerUrl = ['安装程序 URL：', '安裝程式 URL:', 'Installer Url:', 'インストーラーの URL:', '설치 관리자 URL:']
-			let prefix = ''
-			const line = output.split('\n').find(line => ShowLabelInstallerUrl.some(s => line.trim().startsWith(prefix = s)))
-			if (line) {
-				input = line.trim().slice(prefix.length).trim()
-			} else {
-				console.error(output)
-				console.error('\n\tCannot find installer URL from winget output.')
-				process.exitCode = 1
-				return
-			}
-		}
-		const fileName = tryUnescape(basename(input))
-		if (input.startsWith('https://github.com')) {
-			const [_, user, repo, ...rest] = new URL(input).pathname.split('/')
-			const last = rest.pop()!
-			const mirrorUrl = `${mirror}/github-release/${user}/${repo}/LatestRelease/${last}`
-			const response = await fetch(mirrorUrl, { method: 'HEAD' }).catch(() => [] as unknown as Response)
-			if (response.ok) {
-				input = mirrorUrl
-			}
-		}
-		const { confirm } = await import('@clack/prompts')
-		let ok = await confirm({ message: `Download ${fileName} from ${hostname(input)}?` })
-		if (ok === true) {
-			const output = join(homedir(), 'Downloads', fileName)
-			if (existsSync(output)) {
-				console.log(`Exists ${output}, skip download.`)
-			} else {
-				console.log(`Downloading to ${output}...`)
-				await spawn('curl', ['-L', '-o', output, input], { stdio: 'inherit' })
-				console.log(`Saved to ${output}.`)
-			}
-		}
-	}, 'Search package from winget and install')
-
-	async function resolveCodexTrustTarget(): Promise<string> {
-		try {
-			const result = await spawn('git', ['rev-parse', '--show-toplevel'])
-			return result.stdout.trim()
-		} catch {
-			return process.cwd()
-		}
-	}
-
-	function rewriteCodexProjects(configPath: string, target: string): boolean {
-		const source = existsSync(configPath) ? readFileSync(configPath, 'utf8').replace(/\r\n/g, '\n') : ''
-		const lines = source.split('\n')
-		const kept: string[] = []
-		let skippingProjects = false
-		for (const line of lines) {
-			if (/^\s*\[projects(?:\..+)?\]\s*$/.test(line)) {
-				skippingProjects = true
-				continue
-			}
-			if (skippingProjects && /^\s*\[.+\]\s*$/.test(line)) {
-				skippingProjects = false
-			}
-			if (!skippingProjects) {
-				kept.push(line)
-			}
-		}
-
-		const content = kept.join('\n').trimEnd()
-		const pathLiteral = JSON.stringify(target)
-		const projectBlock = `[projects.${pathLiteral}]\ntrust_level = "trusted"\n`
-		writeFileSync(configPath, `${content}${content ? '\n\n' : ''}${projectBlock}`)
-		return source.includes('model_provider =')
-	}
 
 	register('codex', async (_, ...args) => {
 		const configDir = join(homedir(), '.codex')
 		const configPath = join(configDir, 'config.toml')
-		const target = await resolveCodexTrustTarget()
-		mkdirSync(configDir, { recursive: true })
-		const customProvider = rewriteCodexProjects(configPath, target)
+		const target = exec('git', ['rev-parse', '--show-toplevel']) || process.cwd()
+		const custom = rewriteCodexProjects(configPath, target)
 
-		if (!args.includes('--yolo') && !args.includes('--dangerously-bypass-approvals-and-sandbox'))
-			args = ['--yolo', ...args]
-		const env: Record<string, string> = { ...process.env, RUST_LOG: process.env.RUST_LOG ?? 'warn' }
-		if (!customProvider) env.HTTPS_PROXY = 'http://localhost:7890'
+		if (!args.includes('--yolo')) args.unshift('--yolo');
+		const env = { HTTPS_PROXY: '', RUST_LOG: 'warn', ...process.env }
+		if (!custom) env.HTTPS_PROXY = 'http://localhost:7890';
 
 		try {
 			execFileSync('codex', args, { stdio: 'inherit', env })
 		} catch (e) {
-			if (e.status)
-				process.exitCode = e.status
-			else
-				throw e
+			if (e.status) process.exitCode = e.status;
+			else throw e
 		}
-	}, 'Trust current repo for Codex, then run codex --yolo')
+
+		function rewriteCodexProjects(configPath: string, target: string): boolean {
+			const source = readFileSync(configPath, 'utf8').replace(/\r\n/g, '\n')
+			const lines = source.split('\n')
+			const kept: string[] = []
+			let skipping = false
+			for (const line of lines) {
+				if (/^\s*\[projects(?:\..+)?\]\s*$/.test(line)) {
+					skipping = true
+					continue
+				}
+				if (skipping && /^\s*\[.+\]\s*$/.test(line)) {
+					skipping = false
+				}
+				if (!skipping) kept.push(line)
+			}
+			const content = kept.join('\n').trimEnd()
+			const pathLiteral = JSON.stringify(target)
+			const projectBlock = `[projects.${pathLiteral}]\ntrust_level = "trusted"\n`
+			writeFileSync(configPath, `${content}\n\n${projectBlock}`)
+			return source.includes('model_provider = ')
+		}
+	}, 'Trust current repo, then run codex --yolo')
 
 	register('codex', 'clean', async () => {
-		await spawn('codex', ['app-server', 'daemon', 'stop'])
+		exec('lbq', ['codex', 'app-server', 'daemon', 'stop'], { stdio: 'inherit' })
 		const codexHome = join(homedir(), '.codex')
-		const before = await spawn('du', ['-sh', codexHome]).then(s => s.output.split('\t')[0])
-		const result = await spawn('sqlite3', ['-readonly', join(codexHome, 'state_5.sqlite'), 'SELECT id FROM threads;'])
+		const before = execOrFail('du', ['-sh', codexHome]).split('\t')[0]
+		const result = execOrFail('sqlite3', ['-readonly', join(codexHome, 'state_5.sqlite'), 'SELECT id FROM threads;'])
 		const uuidre = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-		const sessions = result.output.trimEnd().split(/\r?\n/g).filter(e => uuidre.test(e))
+		const sessions = result.trimEnd().split(/\r?\n/g).filter(e => uuidre.test(e))
 
 		const daemon = join(codexHome, 'packages', 'app-server-daemon')
 		const current = readlinkSync(join(daemon, 'current'))
@@ -325,373 +69,148 @@ export default function install(register: RegisterFunction) {
 			return
 		}
 
-		const { confirm, isCancel } = await import('@clack/prompts')
-		const confirmation = await confirm({ message: `Delete ${sessions.length} sessions and ${releases.length} daemons?` })
-		if (!confirmation || isCancel(confirmation)) return;
+		if (!await confirm(`Delete ${sessions.length} sessions and ${releases.length} daemons?`)) return;
+
 		for (const session of sessions) {
-			await spawn('codex', ['delete', '--force', session], { stdio: 'inherit' }).catch(() => undefined)
+			exec('codex', ['delete', '--force', session], { stdio: 'inherit' })
 		}
+
 		releases.forEach((path) => {
 			rmSync(path, { recursive: true, force: true })
 			console.log('Deleted daemon', tildify(path))
 		})
-		await spawn('lbq', ['codex', 'app-server', 'daemon', 'start'])
 
-		const after = await spawn('du', ['-sh', codexHome]).then(s => s.output.split('\t')[0])
+		exec('lbq', ['codex', 'app-server', 'daemon', 'start'])
+		const after = execOrFail('du', ['-sh', codexHome]).split('\t')[0]
 		console.log(`Done. ~/.codex: ${before} -> ${after}`)
 	}, 'Delete codex sessions and stale app-server daemon')
 
-	async function newBranchName() {
+	register('gswc', async () => {
 		const { uniqueNamesGenerator, adjectives, animals } = await import('@joaomoreno/unique-names-generator')
 		const dictionaries = [adjectives, animals]
-		return uniqueNamesGenerator({ dictionaries, length: dictionaries.length, separator: '-' })
-	}
+		const branchName = uniqueNamesGenerator({ dictionaries, length: dictionaries.length, separator: '-' })
+		execOrFail('git', ['switch', '-C', branchName], { stdio: 'inherit' })
+	}, 'Switch to a random branch')
 
-	register('gswc', async () => {
-		const branchName = await newBranchName()
-		await spawn('git', ['switch', '-C', branchName], { stdio: 'inherit' })
-	}, 'Switch to random branch name')
+	if (macOS) register('chrome', async (_, ...args) => {
+		const test = bool(args, ['-t', '--test'])
+		const test2 = bool(args, ['-tt', '--test2'])
+		const yolo = bool(args, ['--yolo', '--danger'])
+		const debug = bool(args, ['-d', '--debug', '--debugger'])
+		const chrome = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+		const chromeArgs: string[] = ['--disable-fre', '--no-first-run', '--window-size=1152,720']
+		if (test || test2) chromeArgs.push('--user-data-dir=/tmp/test-chrome-profile-dir' + (test2 ? '2' : ''));
+		if (yolo) chromeArgs.push('--disable-web-security');
+		if (debug) chromeArgs.push('--remote-debugging-port=9222')
+		execOrFail(chrome, chromeArgs, { stdio: 'inherit' })
+	}, 'Open chrome, [-t|-tt|-d|--yolo]')
 
-	register('commit', async (_, message: string | symbol = '') => {
-		const { text, isCancel } = await import('@clack/prompts')
-		message ||= await text({ message: 'Commit message:' })
-		if (message && !isCancel(message)) {
-			const branchName = await newBranchName()
-			await spawn('git', ['switch', '-C', branchName], { stdio: 'inherit' })
-			await spawn('git', ['add', '.'], { stdio: 'inherit' })
-			await spawn('git', ['commit', '-m', message], { stdio: 'inherit' })
+	register('ci', async (_, ...args) => {
+		const all = bool(args, '--all')
+		const print = bool(args, ['--print', '-p'])
+		const edit = bool(args, '--edit')
+		const gen = bool(args, '--gen')
+		if (args.length) {
+			console.log('Usage: lbq ci [--all|--print|-p|--edit|--gen]')
+			return
 		}
-	}, 'Prompt for message, switch to a new branch, then commit')
 
-	register('bun', async () => {
-		interface IBinaryEntry {
-			readonly name: string
-			readonly date: string
-			readonly url: string
-		}
-		let data: IBinaryEntry[] = await fetch('https://registry.npmmirror.com/-/binary/bun').then(r => r.json())
-		let maxDate = '', url = ''
-		for (const entry of data) {
-			if (entry.name.includes('-v') && maxDate < entry.date) {
-				maxDate = entry.date
-				url = entry.url
+		const configPath = fileURLToPath(new URL('./data/ci.json', import.meta.url))
+		const config: Record<string, string[]> = readJson(configPath, {})
+		const cwd = process.cwd()
+		const key = tildify(cwd)
+		const commands = config[key] || []
+
+		if (edit) {
+			if (!Object.hasOwn(config, key)) {
+				config[key] = []
+				writeJson(configPath, config)
 			}
-		}
-		data = await fetch(url).then(r => r.json())
-		let hint = macOS ? 'darwin-aarch64.zip' : 'windows-x64.zip'
-		let entry = data.find(e => e.name.includes(hint))!
-		console.log('.', entry.url)
-		let zipfile = await download(entry.url, join(homedir(), 'Downloads'))
-		let outdir = tmpdir()
-		await unzip(zipfile, outdir)
-		let outfile = join(outdir, macOS ? 'bun-darwin-aarch64' : 'bun-windows-x64', win32 ? 'bun.exe' : 'bun')
-		if (existsSync(outfile)) {
-			renameSync(outfile, join(homedir(), '.bun', 'bin', win32 ? 'bun.exe' : 'bun'))
-			console.log('Done.')
-		} else {
-			console.error('Not found', outfile)
-		}
-	}, 'Upgrade bun')
-
-	if (macOS) register('dock', async () => {
-		await moveWindow('iTerm2', 'br', 710, 455)
-	}, 'Move iTerm2.app to bottom right corner of the screen')
-
-	if (macOS) register('move', async (_, appName = 'iTerm2', anchor = 'br', ...args) => {
-		let w = str(args, ['w', 'window']) || 'front'
-		const isNumber = (s: string | undefined) => s != null && s !== '' && Number.isFinite(Number(s))
-		if (args.length && !isNumber(args[args.length - 1])) {
-			w = args.pop()!
-		}
-		if (args.length > 2) {
-			throw new Error('Usage: move "App" anchor [width] [height] [window]')
-		}
-		const [width, height] = args
-		const nextWidth = width == null ? undefined : Number(width)
-		const nextHeight = height == null ? undefined : Number(height)
-		if (nextWidth != null && (!Number.isFinite(nextWidth) || nextWidth <= 0)) {
-			throw new Error(`Invalid width: ${width}`)
-		}
-		if (nextHeight != null && (!Number.isFinite(nextHeight) || nextHeight <= 0)) {
-			throw new Error(`Invalid height: ${height}`)
-		}
-		await moveWindow(appName, anchor, nextWidth, nextHeight, w)
-	}, 'Move app window, e.g. move "iTerm2" br 710 455 front')
-
-	if (macOS) register('move', 'devtools', async (_, __, width = '800', height = '400', ...args) => {
-		if (args.length) throw new Error('Usage: move devtools [width] [height]')
-		const nextWidth = Number(width)
-		const nextHeight = Number(height)
-		if (!Number.isFinite(nextWidth) || nextWidth <= 0) throw new Error(`Invalid width: ${width}`)
-		if (!Number.isFinite(nextHeight) || nextHeight <= 0) throw new Error(`Invalid height: ${height}`)
-		await resizeDevToolsWindows(nextWidth, nextHeight)
-	}, 'Resize Chrome DevTools in place, default size 800 x 400')
-
-	if (macOS) register('restart', async (_, input) => {
-		execFileSync('osascript', ['-e', `quit app ${JSON.stringify(input)}`], { stdio: 'inherit' });
-		await setTimeout(1500)
-		execFileSync('osascript', ['-e', `tell app ${JSON.stringify(input)} to launch`], { stdio: 'inherit' });
-	}, 'Restart app')
-
-	register('llm', async (_, ...args) => {
-		if (args.includes('-l') || args.includes('--models')) {
-			const configs = await import('./private/llm.json', { with: { type: 'json' } }).then(mod => mod.default)
-			showTable(Object.keys(configs).map(key => [key, configs[key].model, configs[key].baseUrl]))
+			editFile(configPath)
 			return
 		}
 
-		let model = str(args, ['m', 'model']) || ''
-		let sessionId = str(args, ['c', 'continue']) || ''
-		let system = str(args, ['s', 'system']) || ''
-		let level = str(args, ['l', 'level']) || ''
-		let raw = bool(args, ['r', 'raw'])
-		let content = args.join(' ')
-
-		if (!content) {
-			console.log('Usage: llm [-r] [-c id] [-m=model] [-s=system_prompt] [-l=low|medium|max_tokens] "3.9 and 3.11 which is bigger"')
-			console.log('  -c, --continue id: Continue private/llm-<id>.jsonl; ignores system prompts.')
+		if (gen) {
+			const prompt = [
+				`Inspect the current directory using read-only tools and propose lightweight local CI checks for daily development.`,
+				`Read project scripts, CI workflows, and documentation. Use existing tooling. Do not execute commands or modify files.`,
+				`Choose a small, useful sequence of checks such as lint, formatting checks, type checks, and fast tests. Return multiple commands when appropriate, without redundant checks.`,
+				`Avoid full builds, lengthy test suites, integration tests requiring external services, deployments, publishing, destructive cleanup, and automatic fixes. Inspect what scripts actually run before choosing them.`,
+				`Return only a JSON array of shell command strings in execution order. If no suitable checks can be found, return [].`,
+				`Each command runs in a separate shell in ${JSON.stringify(cwd)} on ${process.platform}; shell state does not carry over between commands. Execution stops on the first failure.`,
+				`Existing commands (verify against the project; these may be incorrect): ${JSON.stringify(commands)}`
+			].join('\n');
+			console.log('Generating CI commands...')
+			const output = execOrFail('pi', ['--no-session', '--no-extensions', '--no-mcp', '--tools', 'read,grep,find,ls', '-p', prompt])
+			const generated: unknown = JSON.parse(output.replace(/^```(?:json)?\s*\n([\s\S]*?)\n```$/, '$1'))
+			if (!Array.isArray(generated) || !generated.every(command => typeof command == 'string' && command.trim())) {
+				throw new Error('Expected a JSON array of non-empty shell commands.')
+			}
+			if (!generated.length) {
+				console.log('No suitable CI checks found. Existing commands were not changed.')
+				return
+			}
+			config[key] = generated
+			writeJson(configPath, config)
+			printCommands(generated)
 			return
 		}
 
-		let max_tokens = 0
-		if (level[0] == 'l') max_tokens = 256;
-		else if (level[0] == 'm') max_tokens = 1024;
-		else if (Number.isSafeInteger((max_tokens = Number.parseInt(level, 10))) && max_tokens > 0) max_tokens;
-		else max_tokens = 2048;
-
-		if (max_tokens < 2024) system = `Keep your answer below ${max_tokens} tokens.${system}`;
-		const logDir = join(import.meta.dirname, 'private')
-		const session = sessionId ? readLlmSession(logDir, sessionId) : undefined
-		if (session) system = ''
-
-		const { parseServerSentEvents } = await import('parse-sse')
-		const configs = await import('./private/llm.json', { with: { type: 'json' } }).then(mod => mod.default) as unknown as {
-			[m: string]: { baseUrl: string, apiKey: string, model: string; extra?: {}, balance?: string | { method?: string; url: string } }
-		}
-		const config = model ? configs[model] : Object.values(configs)[0]
-		if (!config) {
-			console.log(`Not found model '${model}', expect ${Object.keys(configs).join(' or ')}`)
-			return
-		}
-
-		const { fetch, EnvHttpProxyAgent } = await import('undici')
-		const dispatcher = config.model.includes('gemini') ? new EnvHttpProxyAgent() : undefined
-		if (dispatcher && !process.env.http_proxy) {
-			console.log('Proxy env not set')
-			return
-		}
-
-		const messages: LlmMessage[] = [{ role: 'user', content }]
-		if (session?.messages) messages.unshift(...session.messages)
-		if (system) messages.unshift({ role: 'system', content: system })
-
-		// baseUrl should be compatible with /chat/completions
-		const response = await fetch(config.baseUrl, {
-			method: 'POST',
-			headers: {
-				'Authorization': 'Bearer ' + config.apiKey,
-				'Content-Type': 'application/json',
-			},
-			body: JSON.stringify({
-				model: config.model,
-				messages,
-				max_tokens,
-				temperature: 0.2,
-				...config.extra,
-				stream_options: { include_usage: true },
-				stream: true
-			}),
-			dispatcher,
-		})
-		if (!response.ok) {
-			throw new Error(await response.text())
-		}
-
-		const streamResult: LlmStreamResult = {
-			stopReason: 'stop',
-			assistantContent: '',
-			reasoningContent: '',
-			usage: undefined,
-		}
-		const responseStream = collectOpenAIChatStream(
-			parseServerSentEvents(response as unknown as Response),
-			streamResult,
-			!raw,
-		)
-		if (raw) for await (const chunk of responseStream) process.stdout.write(chunk)
-		else await renderMarkdownStream(responseStream);
-		const logFile = writePiStyleLlmLog(logDir, {
-			model: config.model,
-			system,
-			content,
-			...streamResult,
-		}, session)
-
-		if (streamResult.usage) {
-			let extra = ''
-			if (config.balance) {
-				let method = 'GET'
-				let url: string
-				let headers: Record<string, string> = {
-					'Authorization': 'Bearer ' + config.apiKey,
-				}
-				if (typeof config.balance == 'string') {
-					url = config.balance
-				} else {
-					method = config.balance.method || method
-					url = config.balance.url
-					if (method == 'POST' || method == 'PUT') {
-						headers['Content-Type'] = 'application/json'
+		if (all) {
+			for (const [path, commands] of Object.entries(config)) {
+				console.log(styleText(['bold', 'cyan'], path))
+				printCommands(commands)
+			}
+		} else if (commands.length) {
+			if (print) {
+				printCommands(commands)
+				return
+			}
+			const times: string[] = []
+			const format = new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+			try {
+				for (const command of commands) {
+					console.log(styleText('underline', command))
+					const start = performance.now()
+					try {
+						execSync(command, { cwd, stdio: 'inherit' })
+					} finally {
+						times.push(format.format((performance.now() - start) / 1000) + 's')
 					}
 				}
-				const response = await fetch(url, { method, headers })
-				if (response.ok) {
-					let data: any = await response.text()
-					if (data[0] == '{') data = JSON.parse(data);
-					extra = `, balance: ${getBalance(data)}`
-				} else {
-					const message = getErrorMessage(await response.text())
-					console.error(`\n\x1B[31mFailed to get balance: ${message}\x1B[m`)
+			} finally {
+				const width = Math.max(4, ...times.map(time => time.length))
+				const limit = Math.max(1, (process.stdout.columns || 100) - width - 2)
+				for (const [index, time] of times.entries()) {
+					const command = commands[index].replace(/\r?\n/g, ' ')
+					console.log(`${time.padStart(width)}  ${truncate(command, limit)}`)
 				}
+				console.log()
 			}
-			const { promptTokens, completionTokens, totalTokens } = normalizeLlmUsage(streamResult.usage)
-			let log = raw ? console.error : console.log
-			log(`\n\x1B[2m// Used ${totalTokens} (${promptTokens} + ${completionTokens}) tokens${extra}\x1B[m`)
-			log(`\x1B[2m// pi --export ${logFile} /tmp/out.html`)
+		} else {
+			console.log('No CI commands configured. Use lbq ci --gen or lbq ci --edit.')
 		}
 
-		pruneLlmLogs(logDir)
-
-		function getBalance(data: any): string {
-			// DeepSeek
-			if (Array.isArray(data?.balance_infos)) {
-				return data.balance_infos.map((b: any) => `${b.total_balance} ${b.currency}`).join(', ')
-			}
-			// No other for now
-			return data && typeof data == 'string' ? data : JSON.stringify(data)
-		}
-	}, 'Mini LLM client')
-
-	const TRANSLATE_LANG_NAMES: Record<string, string> = {
-		en: '英语', zh: '中文', de: '德语', fr: '法语', es: '西班牙语',
-		ja: '日语', ko: '韩语', pt: '葡萄牙语', ru: '俄语', ar: '阿拉伯语',
-		it: '意大利语', nl: '荷兰语', pl: '波兰语', ro: '罗马尼亚语',
-		sv: '瑞典语', tr: '土耳其语', hi: '印地语', vi: '越南语',
-		th: '泰语', id: '印尼语', ms: '马来语', fil: '菲律宾语',
-	}
-
-	function buildTranslatePrompt(text: string, target: string): string {
-		const name = TRANSLATE_LANG_NAMES[target.toLowerCase()] ?? target
-		return `请将以下文本翻译为${name}，直接输出翻译结果，不要进行任何解释。\n\n${text}`
-	}
-
-	register(/^(tr|translate)$/, async (_, ...args) => {
-		const target = str(args, ['t', 'target']) || 'en'
-		const text = args.join(' ').trim()
-		if (!text) {
-			console.log('Usage: translate [-t lang] <text>')
-			console.log('  -t, --target: target language code (default: en), e.g. en/zh/ja')
-			return
-		}
-
-		const { parseServerSentEvents } = await import('parse-sse')
-		const response = await fetch('https://index-translate.bilibili.com/v1/chat/completions', {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				model: 'Index-Translate-35B-A3B',
-				messages: [{ role: 'user', content: buildTranslatePrompt(text, target) }],
-				max_tokens: 1024,
-				temperature: 0,
-				chat_template_kwargs: { enable_thinking: false },
-				stream: true,
-			}),
-		})
-		if (!response.ok) {
-			throw new Error(await response.text())
-		}
-
-		const result: LlmStreamResult = { stopReason: 'stop', assistantContent: '', reasoningContent: '', usage: undefined }
-		const stream = collectOpenAIChatStream(parseServerSentEvents(response as unknown as Response), result, false)
-		for await (const chunk of stream) process.stdout.write(chunk)
-		process.stdout.write('\n')
-	}, 'Translate text via Index-Translate')
-
-	register('fix-ni', (_, ...args: string[]) => {
-		if (!existsSync('node_modules')) {
-			console.log('This command only works in npm projects!')
-			return
-		}
-
-		const dryRun = args.includes('-c') || args.includes('--dry-run')
-		const items = scanBrokenNodeModules()
-		for (const { name, garbage } of items) {
-			console.log('-', name, garbage)
-			if (dryRun) continue;
-			rmSync(garbage, { recursive: true, force: true })
-		}
-	}, 'Delete node_modules/.pkg-hash files after a broken install')
-
-	register('tsc', async (_, ...includes: string[]) => {
-		const yes = bool(includes, ['y', 'yes'])
-		const watch = bool(includes, ['w', 'watch'])
-		let files = globSync('**/tsconfig.json', { exclude: ['node_modules'] })
-		if (includes.length) {
-			files = files.filter(p => includes.some(a => p.includes(a)))
-		}
-		if (files.length === 0) {
-			console.log('Not found tsconfig.json')
-			return
-		}
-		const { confirm, multiselect, isCancel } = await import('@clack/prompts')
-		if (!yes) {
-			if (files.length === 1) {
-				const response = await confirm({ message: `Run \$ tsc --noEmit -p ${files[0]} ?` })
-				if (!response || isCancel(response)) {
-					return
-				}
-			} else {
-				const response = await multiselect({
-					message: 'Select one or more projects to run ts check',
-					options: files.map(e => ({ label: e, value: e })),
-					initialValues: files
-				})
-				if (isCancel(response) || !response.length) {
-					return;
-				}
-				files = response
+		function printCommands(commands: string[]) {
+			for (const command of commands) {
+				console.log(`  ${styleText('dim', command)}`)
 			}
 		}
-		const tsc = win32 ? 'tsc.cmd' : 'tsc'
-		await spawn(tsc, ['--version'], { stdio: 'inherit' })
-		for (const file of files) {
-			const args = ['--noEmit', '-p', file]
-			if (watch) args.push('--watch')
-			console.log(`$ tsc ${args.join(' ')}`)
-			const result = await spawn(tsc, args, { stdio: 'inherit' }).catch(e => e as import('nano-spawn').SubprocessError)
-			console.log(styleText('gray', `[Finished in ${result.durationMs}ms]`))
-			process.exitCode ||= asNumber(result)
-		}
-	}, 'Run tsc --noEmit')
+	}, 'Local CI')
 
-	register('dev', async () => {
-		const config = join(import.meta.dirname, 'tsconfig.json')
-		const result = await spawn('tsc', ['--noEmit', '-p', config, '-w'], { stdio: 'inherit' }).catch(spawnError)
-		process.exitCode ||= asNumber(result)
-	}, `Watch type issues in ${here}`)
-
-	register('deprecate', async (_, ...args: string[]) => {
+	register('deprecate', async (_, ...args) => {
 		const silent = bool(args, ['-s', '--silent'])
-		const exclude = str(args, '--exclude')
+		const exclude = str(args, '--exclude') ?? null
 		const scanner = new DeprecationsScanner(process.cwd(), args, exclude)
 		const { highlight } = await import('@babel/code-frame')
 		const progress = new ProgressLine(process.stderr)
 		try {
 			for await (const result of scanner.scanFiles(silent)) {
-				progress.render(`Scanned ${result.scanned}/${result.total} files (${formatPercent(result.scanned, result.total)}%)`)
+				const percent = result.total == 0 ? '100.0' : (result.scanned / result.total * 100).toFixed(1)
+				progress.render(`Scanned ${result.scanned}/${result.total} files (${percent}%)`)
 				if (result.file.startsWith('..') || !result.deprecations.length) continue
 				const deprecations = result.deprecations.toSorted((a, b) => a.line - b.line || a.character - b.character).filter((dep, index, self) => {
-					return index === 0 || dep.line !== self[index - 1].line
+					return index == 0 || dep.line != self[index - 1].line
 				})
 				let output = `\x1B[35m${result.file}\x1B[m\n`
 				for (const { line, character, message, projectPath } of deprecations) {
@@ -704,135 +223,5 @@ export default function install(register: RegisterFunction) {
 		} finally {
 			progress.done()
 		}
-	}, 'Scan for deprecated APIs in the codebase')
-
-	register('sleep', async (_, ...args) => {
-		const duration = Number.parseFloat(args[0] || '1') * 1000
-		if (isNaN(duration) || duration < 0) {
-			console.error('Usage: sleep [duration in seconds]')
-			return
-		}
-		const { Spinner } = await import('picospinner')
-		const s = new Spinner('Sleeping...')
-		s.start()
-		const start = Date.now()
-		while (Date.now() - start < duration) {
-			s.setText(`Sleeping... ${Math.ceil((duration - (Date.now() - start)) / 1000)}s left`)
-			await setTimeout(1000)
-		}
-		s.succeed('Awake!')
-		if (macOS) {
-			const { default: display } = await import('display-notification')
-			display({ title: 'Awake!', subtitle: 'Sleep', text: `Finished after ${duration / 1000}s`, sound: 'Frog' })
-		}
-	}, 'Sleep for a while')
-
-	register('ghproxy', () => {
-		const file = join(homedir(), '.gitconfig')
-		let text = readFileSync(file, 'utf8'), i = 0, j = 0, config = '', proxy = false
-		let crlf = text.includes('\r')
-		if ((i = text.indexOf('[http "https://github.com')) >= 0) {
-			j = text.indexOf('[', i + 1)
-			if (j < 0) j = text.length;
-			if (text[i - 1] == ' ' && text[i - 2] == '#') {
-				i -= 2
-				config = text.slice(i, j).replaceAll('# ', '')
-				proxy = true
-			} else if (i === 0 || text[i - 1] === '\n') {
-				config = text.slice(i, j).trimEnd().replace(/\r/g, '').replace(/^/gm, '# ') + '\n'
-				if (crlf) config = config.replace(/\n/g, '\r\n')
-				proxy = false
-			} else {
-				throw new Error('not found the config')
-			}
-			text = text.slice(0, i) + config + text.slice(j)
-			writeFileSync(file, text)
-			console.log(`Proxy ${proxy ? 'ON' : 'OFF'}.`)
-		} else {
-			throw new Error('not found the config file')
-		}
-	}, 'Toggle .gitconfig proxy settings')
-
-	register('cargo', async () => {
-		const deps: string[] = []
-		{
-			let s = readFileSync('Cargo.toml', 'utf-8').split('[dependencies]')[1]
-			let i = s.indexOf('\n[')
-			if (i > 0) s = s.slice(0, i);
-			for (let [_, dep] of s.matchAll(/^(\S+) =/gm)) {
-				deps.push(dep)
-			}
-		}
-		process.stdout.write('Checking deps: ' + deps.join(', '))
-		const result = await spawn('git', ['diff', 'Cargo.lock'])
-		const lines = result.output.trimEnd().split(/\r?\n/g)
-		if (lines.length < 3) {
-			console.log('Run `cargo update` first.')
-			return
-		}
-		process.stdout.write('\r\x1B[2K')
-		showTable(table => {
-			let name = '', version = ''
-			for (const line of lines) {
-				if (line.startsWith('[[package')) {
-					name = version = ''
-				} else if (line.startsWith(' name = "')) {
-					name = line.slice(9, -1)
-				} else if (line.startsWith('+version = "')) {
-					version = line.slice(12, -1)
-					if (deps.includes(name)) {
-						table.push([name, version])
-					}
-					name = version = ''
-				}
-			}
-		})
-	}, 'List changed dependencies after cargo update')
-
-	if (macOS) register('chrome', async (_, ...args) => {
-		const test = bool(args, ['-t', '--test'])
-		const test2 = bool(args, ['-tt', '--test2'])
-		const yolo = bool(args, ['--yolo', '--danger'])
-		const debug = bool(args, ['-d', '--debug', '--debugger'])
-		const chrome = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
-		const chromeArgs: string[] = ['--disable-fre', '--no-first-run', '--window-size=1152,720']
-		if (test || test2) chromeArgs.push('--user-data-dir=/tmp/test-chrome-profile-dir' + (test2 ? '2' : ''));
-		if (yolo) chromeArgs.push('--disable-web-security');
-		if (debug) chromeArgs.push('--remote-debugging-port=9222')
-		await spawn(chrome, chromeArgs, { stdio: 'inherit' })
-	}, 'Open chrome, --test to use temp data dir, --yolo to bypass cors')
-
-	register('cors', async (_, ...args) => {
-		function help() {
-			console.log([
-				'Usage: lbq cors [method] <url> <origin> [...headers]',
-				'Example: `lbq cors POST https://api.example.com/api https://example.com x-custom-field` will send:',
-				'  OPTIONS https://api.example.com/api',
-				'  Origin: https://example.com',
-				'  Access-Control-Request-Method: POST',
-				'  Access-Control-Request-Headers: x-custom-field',
-			].join('\n'))
-		}
-		if (bool(args, ['-h', '--help']) || args.length < 2) return help();
-		let method: string, url: string, origin: string, headers: string[]
-		let a = args.shift()!
-		if (/^https?:\/\//iu.test(a)) {
-			method = 'GET'
-			url = a
-		} else {
-			method = a
-			url = args.shift()!
-		}
-		origin = args.shift()!
-		headers = args
-		const xh_args = ['options', url, `origin:${origin}`,
-			`access-control-request-method:${method}`,
-			`access-control-request-headers:${headers.join(',')}`]
-		console.log(`$ xh ${xh_args.join(' ')}`)
-		await spawn('xh', xh_args, { stdio: 'inherit' })
-	}, 'Test CORS headers')
-
-	register('ci', async (_, ...args) => {
-		await import('./lib/ci').then(mod => mod.runCi(args))
-	}, 'Generate and run cached CI checks')
+	}, 'Scan deprecations, [-s|--exclude <pattern>] [paths]')
 }

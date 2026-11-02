@@ -3,9 +3,44 @@ import type { Node } from 'typescript/unstable/ast';
 
 import { globSync, readFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
-import { createInterface } from 'node:readline';
+import { createInterface } from 'node:readline/promises';
 import { dirname, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { prompt } from './base.ts';
+
+export class ProgressLine {
+	private readonly stream: NodeJS.WriteStream;
+	private text = ''
+
+	constructor(stream: NodeJS.WriteStream) {
+		this.stream = stream
+	}
+
+	render(text: string): void {
+		if (!this.stream.isTTY) return
+		this.text = text
+		this.stream.write(`\r\x1B[2K${text}`)
+	}
+
+	clear(): void {
+		if (!this.stream.isTTY || !this.text) return
+		this.stream.write('\r\x1B[2K')
+		this.text = ''
+	}
+
+	writeStdout(text: string): void {
+		const progressText = this.text
+		this.clear()
+		process.stdout.write(text)
+		if (progressText) {
+			this.render(progressText)
+		}
+	}
+
+	done(): void {
+		this.clear()
+	}
+}
 
 type TypeScriptVersionModule = typeof import('typescript');
 type TypeScriptSyncModule = typeof import('typescript/unstable/sync');
@@ -111,17 +146,18 @@ export class DeprecationsScanner {
 	async *scanFiles(silent = false, batchSize = DeprecationsScanner.defaultBatchSize): AsyncIterable<DeprecationFileResult> {
 		let projects = globSync('**/tsconfig.json', { exclude: ['node_modules', 'scripts'], cwd: this.cwd });
 
+		if (!projects.length) return;
 		if (!silent) {
-			const { multiselect, isCancel } = await import('@clack/prompts');
-			const response = await multiselect({
-				message: 'Select one or more projects to run ts check',
-				options: projects.map(e => ({ label: e, value: e })),
-				initialValues: projects
-			});
-			if (isCancel(response) || !response.length) {
-				return;
+			projects.forEach((project, index) => console.log(`  ${index + 1}. ${project}`));
+			const answer = (await prompt('Select projects (All/1..n/q): ')).trim();
+			if (answer.toLowerCase() == 'q') return;
+			if (answer) {
+				const choices = answer.split(/[\s,]+/).map(Number);
+				if (!choices.every(choice => Number.isInteger(choice) && 1 <= choice && choice <= projects.length)) {
+					throw new Error('Invalid project selection.');
+				}
+				projects = [...new Set(choices)].map(choice => projects[choice - 1]);
 			}
-			projects = response;
 		}
 
 		await this.loadTypeScript();
@@ -200,8 +236,8 @@ export class DeprecationsScanner {
 		}
 
 		const exitCode = await exit;
-		if (exitCode != 0 && !failed) {
-			console.error(`Deprecation worker exited with code ${exitCode}.`);
+		if (failed || exitCode != 0) {
+			throw new Error(`Deprecation worker exited with code ${exitCode}.`);
 		}
 	}
 

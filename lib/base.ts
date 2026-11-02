@@ -1,118 +1,117 @@
-import type { SubprocessError } from 'nano-spawn';
+import { type ExecFileSyncOptions, execFileSync } from 'node:child_process';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
+import { createInterface } from 'node:readline/promises';
 
-export type RegisterFunction = {
-	(pattern: string | RegExp, run: (arg: RegExpMatchArray, ...args: string[]) => unknown, description?: string): void;
-	(pattern: string | RegExp, pattern2: string | RegExp, run: (arg: RegExpMatchArray, arg2: RegExpMatchArray, ...args: string[]) => unknown, description?: string): void;
-	(pattern: string | RegExp, pattern2: string | RegExp, pattern3: string | RegExp, run: (arg: RegExpMatchArray, arg2: RegExpMatchArray, arg3: RegExpMatchArray, ...args: string[]) => unknown, description?: string): void;
+const defaultExecOptions: ExecFileSyncOptions = {
+  windowsHide: true,
+  stdio: ['pipe', 'pipe', 'inherit']
 }
 
-/** `^1` &rarr; `1` */
-export function cleanVersion(v: string): string {
-	return v.replace(/^[^\d]+/, '')
+export function exec(cmd: string, args: readonly string[], options?: ExecFileSyncOptions): string | null {
+  try {
+    return execFileSync(cmd, args, { ...defaultExecOptions, ...options, encoding: 'utf8' }).trim();
+  } catch {
+    return null;
+  }
 }
 
-/** `try { decodeURIComponent(str) }` */
-export function tryUnescape(str: string): string {
-	try { return decodeURIComponent(str) }
-	catch { return str }
+export function execOrFail(cmd: string, args: readonly string[], options?: ExecFileSyncOptions): string {
+  try {
+    return execFileSync(cmd, args, { ...defaultExecOptions, ...options, encoding: 'utf8' }).trim();
+  } catch {
+    process.exit(1);
+  }
 }
 
-/** `https://github.com/...` &rarr; `github.com` */
-export function hostname(str: string): string {
-	try { return (new URL(str)).hostname }
-	catch { return str.split('/')[0] || str }
+export async function confirm(question: string): Promise<boolean> {
+  const rl = createInterface({ input: process.stdin, output: process.stdout })
+
+  try {
+    const answer = await rl.question(`${question} (Y/n) `)
+    return ['y', 'yes', ''].includes(answer.trim().toLowerCase())
+  } finally {
+    rl.close()
+  }
 }
-
-export function anchor(text: string, href: string): string {
-	return `\x1b]8;;${href}\x07${text}\x1b]8;;\x07`
-}
-
-export type TableCell = string | { readonly label: string, readonly link: string }
-
-function cellLen(cell: TableCell): number {
-	if (typeof cell === 'object') {
-		return cell.label.length
-	} else {
-		return cell.length
-	}
-}
-
-export function showTable(table: readonly TableCell[][] | ((table: TableCell[][]) => void)): void {
-	if (typeof table === 'function') {
-		const fn = table
-		table = []
-		fn(table as TableCell[][])
-	}
-	const maxLens = Array.from({ length: table[0].length }, () => 0)
-	table.forEach(row => row.forEach((cell, i) => { maxLens[i] = Math.max(maxLens[i], cellLen(cell)) }))
-	table.forEach(row => {
-		console.log('  ' + row.map((cell, i) => {
-			if (typeof cell === 'object') {
-				return anchor(cell.label, cell.link) + ' '.repeat(maxLens[i] - cell.label.length)
-			} else {
-				return cell + ' '.repeat(maxLens[i] - cell.length)
-			}
-		}).join('  '))
-	})
-}
-
-export function getErrorMessage(error: any): string {
-	if (typeof error == 'string') {
-		if (error[0] == '{') return getErrorMessage(JSON.parse(error));
-		return error;
-	}
-	if (typeof error == 'object' && error !== null) {
-		const m = error.stack || error.message || error.code
-		if (m) return String(m);
-	}
-	return String(error) || 'Error'
+export async function prompt(question: string): Promise<string> {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    return await rl.question(question);
+  } finally {
+    rl.close();
+  }
 }
 
 export function bool(argv: string[], flag: string | string[]): boolean {
-	if (Array.isArray(flag)) {
-		return flag.map(f => bool(argv, f)).reduce((a, b) => a || b)
-	}
-	if (flag[0] !== '-') {
-		flag = flag.length == 1 ? '-' + flag : '--' + flag
-	}
-	const index = argv.indexOf(flag)
-	if (index >= 0) {
-		argv.splice(index, 1)
-		return true
-	}
-	return false
+  if (Array.isArray(flag)) {
+    return flag.map(f => bool(argv, f)).reduce((a, b) => a || b)
+  }
+  if (flag[0] !== '-') {
+    flag = flag.length == 1 ? '-' + flag : '--' + flag
+  }
+  const index = argv.indexOf(flag)
+  if (index >= 0) {
+    argv.splice(index, 1)
+    return true
+  }
+  return false
 }
 
 export function str(argv: string[], flag: string | string[]): string | undefined {
-	if (Array.isArray(flag)) {
-		for (const f of flag) {
-			const v = str(argv, f)
-			if (v != null) return v
-		}
-		return
-	}
-	if (flag[0] !== '-') {
-		flag = flag.length == 1 ? '-' + flag : '--' + flag
-	}
-	const i = argv.findIndex(arg => arg == flag || arg.startsWith(flag + '='))
-	if (i < 0) return
-	const arg = argv[i]
-	if (arg == flag) {
-		const v = argv[i + 1]
-		argv.splice(i, v == null ? 1 : 2)
-		return v
-	}
-	argv.splice(i, 1)
-	return arg.slice(flag.length + 1)
+  if (Array.isArray(flag)) {
+    for (const f of flag) {
+      const v = str(argv, f)
+      if (v != null) return v
+    }
+    return
+  }
+  if (flag[0] !== '-') {
+    flag = flag.length == 1 ? '-' + flag : '--' + flag
+  }
+  const i = argv.findIndex(arg => arg == flag || arg.startsWith(flag + '='))
+  if (i < 0) return
+  const arg = argv[i]
+  if (arg == flag) {
+    const v = argv[i + 1]
+    argv.splice(i, v == null ? 1 : 2)
+    return v
+  }
+  argv.splice(i, 1)
+  return arg.slice(flag.length + 1)
 }
 
-export function spawnError(e: unknown) {
-	return (e as SubprocessError).exitCode
+export function editFile(file: string): void {
+  const editors = ['subl', 'code', 'edit', 'vim']
+  for (const editor of editors) {
+    try {
+      execFileSync(editor, [file], { stdio: 'inherit' })
+      return
+    } catch (e) {
+      if (e.code != 'ENOENT' || editor == editors.at(-1)) throw e;
+    }
+  }
 }
 
-export function asNumber(e: unknown): number {
-	if (typeof e == 'number' && e == e)
-		return e
-	else
-		return 0
+export function readJson<T>(file: string, defaultValue: T): T {
+  try {
+    return JSON.parse(readFileSync(file, 'utf8'))
+  } catch {
+    return defaultValue
+  }
+}
+
+export function writeJson(file: string, value: unknown): void {
+  const content = JSON.stringify(value, (_, value) => {
+    if (value && typeof value == 'object' && !Array.isArray(value)) {
+      return Object.fromEntries(Object.keys(value).sort().map(key => [key, value[key]]))
+    }
+    return value
+  }, 2)
+  mkdirSync(dirname(file), { recursive: true })
+  writeFileSync(file, content + '\n')
+}
+
+export function truncate(text: string, length: number): string {
+  return text.length > length ? text.slice(0, length - 1) + '…' : text
 }
