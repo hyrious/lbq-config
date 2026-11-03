@@ -12,6 +12,12 @@ export default function install(register: RegisterFunction) {
 	const win32 = process.platform == 'win32'
 	const macOS = process.platform == 'darwin'
 
+	register('update', () => {
+		console.log('Updating...')
+		execOrFail('git', ['pull', '--ff-only'], { cwd: import.meta.dirname, stdio: 'inherit' })
+		execOrFail('npm', ['install'], { cwd: import.meta.dirname, stdio: 'inherit' })
+	}, 'Pull latest lbq config')
+
 	register('codex', async (_, ...args) => {
 		const configDir = join(homedir(), '.codex')
 		const configPath = join(configDir, 'config.toml')
