@@ -1,22 +1,38 @@
-import { execFileSync, execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { readdirSync, readFileSync, readlinkSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { styleText } from 'node:util';
 import tildify from 'tildify';
-import { bool, confirm, editFile, exec, execOrFail, readJson, str, truncate, writeJson } from './lib/base';
+import { bool, confirm, editFile, exec, execOrFail, readJson, str, writeJson } from './lib/base';
 import { DeprecationsScanner, ProgressLine } from './lib/scanDeprecations';
 
 export default function install(register: RegisterFunction) {
 	const win32 = process.platform == 'win32'
 	const macOS = process.platform == 'darwin'
+	const dataPath = join(import.meta.dirname, 'data')
 
 	register('update', () => {
 		console.log('Updating...')
 		execOrFail('git', ['pull', '--ff-only'], { cwd: import.meta.dirname, stdio: 'inherit' })
 		execOrFail('npm', ['install'], { cwd: import.meta.dirname, stdio: 'inherit' })
 	}, 'Pull latest lbq config')
+
+	register('note', (_, ...args) => {
+		const edit = bool(args, ['-e', '--edit'])
+		const notesPath = join(dataPath, 'notes.json')
+		const notes = readJson<{ [path: string]: string | string[] | undefined }>(notesPath, {})
+		const key = tildify(process.cwd())
+		if (edit || notes[key] == null) {
+			notes[key] ||= 'Hello, world!'
+			writeJson(notesPath, notes)
+			return editFile(notesPath)
+		}
+		puts(notes[key])
+		function puts(str: string | readonly string[]) {
+			if (Array.isArray(str)) return void str.forEach(puts);
+			console.log(str)
+		}
+	}, 'Local notebook, --edit to edit it')
 
 	register('codex', async (_, ...args) => {
 		const configDir = join(homedir(), '.codex')
@@ -81,10 +97,10 @@ export default function install(register: RegisterFunction) {
 			exec('codex', ['delete', '--force', session], { stdio: 'inherit' })
 		}
 
-		releases.forEach((path) => {
+		for (const path of releases) {
 			rmSync(path, { recursive: true, force: true })
 			console.log('Deleted daemon', tildify(path))
-		})
+		}
 
 		exec('lbq', ['codex', 'app-server', 'daemon', 'start'])
 		const after = execOrFail('du', ['-sh', codexHome]).split('\t')[0]
@@ -110,99 +126,6 @@ export default function install(register: RegisterFunction) {
 		if (debug) chromeArgs.push('--remote-debugging-port=9222')
 		execOrFail(chrome, chromeArgs, { stdio: 'inherit' })
 	}, 'Open chrome, [-t|-tt|-d|--yolo]')
-
-	register('ci', async (_, ...args) => {
-		const all = bool(args, '--all')
-		const print = bool(args, ['--print', '-p'])
-		const edit = bool(args, '--edit')
-		const gen = bool(args, '--gen')
-		if (args.length) {
-			console.log('Usage: lbq ci [--all|--print|-p|--edit|--gen]')
-			return
-		}
-
-		const configPath = fileURLToPath(new URL('./data/ci.json', import.meta.url))
-		const config: Record<string, string[]> = readJson(configPath, {})
-		const cwd = process.cwd()
-		const key = tildify(cwd)
-		const commands = config[key] || []
-
-		if (edit) {
-			if (!Object.hasOwn(config, key)) {
-				config[key] = []
-				writeJson(configPath, config)
-			}
-			editFile(configPath)
-			return
-		}
-
-		if (gen) {
-			const prompt = [
-				`Inspect the current directory using read-only tools and propose lightweight local CI checks for daily development.`,
-				`Read project scripts, CI workflows, and documentation. Use existing tooling. Do not execute commands or modify files.`,
-				`Choose a small, useful sequence of checks such as lint, formatting checks, type checks, and fast tests. Return multiple commands when appropriate, without redundant checks.`,
-				`Avoid full builds, lengthy test suites, integration tests requiring external services, deployments, publishing, destructive cleanup, and automatic fixes. Inspect what scripts actually run before choosing them.`,
-				`Return only a JSON array of shell command strings in execution order. If no suitable checks can be found, return [].`,
-				`Each command runs in a separate shell in ${JSON.stringify(cwd)} on ${process.platform}; shell state does not carry over between commands. Execution stops on the first failure.`,
-				`Existing commands (verify against the project; these may be incorrect): ${JSON.stringify(commands)}`
-			].join('\n');
-			console.log('Generating CI commands...')
-			const output = execOrFail('pi', ['--no-session', '--no-extensions', '--no-mcp', '--tools', 'read,grep,find,ls', '-p', prompt])
-			const generated: unknown = JSON.parse(output.replace(/^```(?:json)?\s*\n([\s\S]*?)\n```$/, '$1'))
-			if (!Array.isArray(generated) || !generated.every(command => typeof command == 'string' && command.trim())) {
-				throw new Error('Expected a JSON array of non-empty shell commands.')
-			}
-			if (!generated.length) {
-				console.log('No suitable CI checks found. Existing commands were not changed.')
-				return
-			}
-			config[key] = generated
-			writeJson(configPath, config)
-			printCommands(generated)
-			return
-		}
-
-		if (all) {
-			for (const [path, commands] of Object.entries(config)) {
-				console.log(styleText(['bold', 'cyan'], path))
-				printCommands(commands)
-			}
-		} else if (commands.length) {
-			if (print) {
-				printCommands(commands)
-				return
-			}
-			const times: string[] = []
-			const format = new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-			try {
-				for (const command of commands) {
-					console.log(styleText('underline', command))
-					const start = performance.now()
-					try {
-						execSync(command, { cwd, stdio: 'inherit' })
-					} finally {
-						times.push(format.format((performance.now() - start) / 1000) + 's')
-					}
-				}
-			} finally {
-				const width = Math.max(4, ...times.map(time => time.length))
-				const limit = Math.max(1, (process.stdout.columns || 100) - width - 2)
-				for (const [index, time] of times.entries()) {
-					const command = commands[index].replace(/\r?\n/g, ' ')
-					console.log(`${time.padStart(width)}  ${truncate(command, limit)}`)
-				}
-				console.log()
-			}
-		} else {
-			console.log('No CI commands configured. Use lbq ci --gen or lbq ci --edit.')
-		}
-
-		function printCommands(commands: string[]) {
-			for (const command of commands) {
-				console.log(`  ${styleText('dim', command)}`)
-			}
-		}
-	}, 'Local CI')
 
 	register('deprecate', async (_, ...args) => {
 		const silent = bool(args, ['-s', '--silent'])

@@ -107,9 +107,10 @@ export function writeJson(file: string, value: unknown): void {
       return Object.fromEntries(Object.keys(value).sort().map(key => [key, value[key]]))
     }
     return value
-  }, 2)
+  }, 2) + '\n'
   mkdirSync(dirname(file), { recursive: true })
-  writeFileSync(file, content + '\n')
+  if (readFileSync(file, 'utf8') === content) return;
+  writeFileSync(file, content)
 }
 
 export function truncate(text: string, length: number): string {
