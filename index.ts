@@ -29,8 +29,34 @@ export default function install(register: RegisterFunction) {
 		}
 		puts(notes[key])
 		function puts(str: string | readonly string[]) {
-			if (Array.isArray(str)) return void str.forEach(puts);
-			console.log(str)
+			typeof str == 'string' ? console.log(highlight(str)) : str.forEach(puts)
+		}
+		function highlight(str: string) {
+			if (!str.startsWith('$ ')) return str;
+			let index = 0
+			return '$ ' + str.slice(2).replace(/#[^\r\n]*|(?:[^\s'"\\]|\\.|'[^']*'|"(?:[^"\\]|\\.)*")+/g, token => {
+				let color = ''
+				if (token.startsWith('#')) color = '90';
+				else {
+					const position = index++
+					if (position == 0) color = '1;32';
+					else if (/^--?[a-zA-Z]/.test(token)) color = '36';
+					else if (position == 1 && /^[a-zA-Z]+$/.test(token)) color = '32';
+				}
+				const highlighted = color == '90'
+					? token.replace(/\[[^\]\r\n]*\]|<\w+>|\{\w+\}/g, word => {
+						return word[0] == '['
+							? `\x1B[m${placeholders(word, '')}\x1B[90m`
+							: placeholders(word, color)
+					})
+					: placeholders(token, color)
+				return color ? `\x1B[${color}m${highlighted}\x1B[m` : highlighted
+			})
+			function placeholders(text: string, color: string) {
+				return text.replace(/<\w+>|\{\w+\}/g, word => {
+					return `\x1B[0;${word[0] == '<' ? '33' : '35'}m${word}\x1B[m\x1B[${color}m`
+				})
+			}
 		}
 	}, 'Local notebook, --edit to edit it')
 
