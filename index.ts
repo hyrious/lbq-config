@@ -17,6 +17,22 @@ export default function install(register: RegisterFunction) {
 		execOrFail('npm', ['install'], { cwd: import.meta.dirname, stdio: 'inherit' })
 	}, 'Pull latest lbq config')
 
+	if (macOS) register('dock', async () => {
+		const { runJxa } = await import('run-jxa')
+		// screen.frame = full window, screen.visibleFrame = frame - appbar - dock
+		await runJxa(`
+			ObjC.import('AppKit')
+			const screen = $.NSScreen.screens.objectAtIndex(0)
+			const frame = screen.visibleFrame
+			Application('iTerm2').currentWindow.bounds = {
+				x: frame.origin.x + frame.size.width - 710,
+				y: screen.frame.size.height - frame.origin.y - 455,
+				width: 710,
+				height: 455,
+			}
+		`)
+	}, 'Move iTerm2.app to bottom right')
+
 	register('note', (_, ...args) => {
 		const edit = bool(args, ['-e', '--edit'])
 		const notesPath = join(dataPath, 'notes.json')

@@ -3,6 +3,7 @@
   "dependencies": {
     "@babel/code-frame": "^8.0.6",
     "@joaomoreno/unique-names-generator": "^5.2.0",
+    "run-jxa": "^4.0.0",
     "tildify": "^3.0.0",
     "typescript": "^7.0.2"
   },
