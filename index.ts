@@ -97,21 +97,29 @@ export default function install(register: RegisterFunction) {
 			const source = readFileSync(configPath, 'utf8').replace(/\r\n/g, '\n')
 			const lines = source.split('\n')
 			const kept: string[] = []
-			let skipping = false
+			const projects = new Map<string, string[]>()
+			let block = kept
 			for (const line of lines) {
-				if (/^\s*\[projects(?:\..+)?\]\s*$/.test(line)) {
-					skipping = true
-					continue
+				if (/^\s*\[/.test(line)) {
+					const match = /^\s*\[projects\.("(?:[^"\\]|\\.)*"|'[^']*')\]\s*(?:#.*)?$/.exec(line)
+					if (match) {
+						const path = match[1][0] == '"' ? JSON.parse(match[1]) : match[1].slice(1, -1)
+						block = []
+						projects.set(path, block)
+					} else {
+						block = kept
+					}
 				}
-				if (skipping && /^\s*\[.+\]\s*$/.test(line)) {
-					skipping = false
-				}
-				if (!skipping) kept.push(line)
+				block.push(line)
 			}
+			const project = projects.get(target) || [`[projects.${JSON.stringify(target)}]`]
+			const trustIndex = project.findIndex(line => /^\s*trust_level\s*=/.test(line))
+			if (trustIndex >= 0) project[trustIndex] = 'trust_level = "trusted"';
+			else project.splice(1, 0, 'trust_level = "trusted"');
+			projects.set(target, project)
 			const content = kept.join('\n').trimEnd()
-			const pathLiteral = JSON.stringify(target)
-			const projectBlock = `[projects.${pathLiteral}]\ntrust_level = "trusted"\n`
-			writeFileSync(configPath, `${content}\n\n${projectBlock}`)
+			const projectBlocks = [...projects.keys()].sort().map(path => projects.get(path)!.join('\n').trimEnd())
+			writeFileSync(configPath, `${content}\n\n${projectBlocks.join('\n\n')}\n`)
 			return source.includes('model_provider = ')
 		}
 	}, 'Trust current repo, then run codex --yolo')
