@@ -1,5 +1,5 @@
 import { type ExecFileSyncOptions, execFileSync } from 'node:child_process';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 
@@ -90,6 +90,31 @@ export function editFile(file: string): void {
     } catch (e) {
       if (e.code != 'ENOENT' || editor == editors.at(-1)) throw e;
     }
+  }
+}
+
+export function readText(file: string): string {
+  try {
+    return readFileSync(file, 'utf8').trim()
+  } catch {
+    return ''
+  }
+}
+
+export function readDir(dir: string): string[] {
+  try {
+    return readdirSync(dir)
+  } catch {
+    return []
+  }
+}
+
+/** Modification time in milliseconds, or Infinity for paths that do not exist. */
+export function mtime(file: string): number {
+  try {
+    return statSync(file).mtimeMs
+  } catch {
+    return Infinity
   }
 }
 

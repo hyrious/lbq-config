@@ -1,9 +1,9 @@
 import { execFileSync } from 'node:child_process';
-import { readdirSync, readFileSync, readlinkSync, rmSync, writeFileSync } from 'node:fs';
+import { readdirSync, readFileSync, readlinkSync, rmdirSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import tildify from 'tildify';
-import { bool, confirm, editFile, exec, execOrFail, readJson, str, writeJson } from './lib/base';
+import { bool, confirm, editFile, exec, execOrFail, mtime, readDir, readJson, readText, str, writeJson } from './lib/base';
 import { DeprecationsScanner, ProgressLine } from './lib/scanDeprecations';
 
 export default function install(register: RegisterFunction) {
@@ -156,6 +156,52 @@ export default function install(register: RegisterFunction) {
 		const after = execOrFail('du', ['-sh', codexHome]).split('\t')[0]
 		console.log(`Done. ~/.codex: ${before} -> ${after}`)
 	}, 'Delete codex sessions and stale app-server daemon')
+
+	register('pi', 'clean', async () => {
+		const agentDir = join(homedir(), '.pi', 'agent')
+		const sessionsDir = join(agentDir, 'sessions')
+		const releasesDir = join(agentDir, 'install', 'releases')
+
+		// pi rewrites a session file on every message, so a file touched in the last hour may still
+		// belong to a session that is running. Leave those alone.
+		const cutoff = Date.now() - 3600000
+
+		const sessions: string[] = []
+		for (const project of readDir(sessionsDir)) {
+			const dir = join(sessionsDir, project)
+			for (const file of readDir(dir)) {
+				const path = join(dir, file)
+				if (file.endsWith('.jsonl') && mtime(path) < cutoff) sessions.push(path)
+			}
+		}
+
+		const current = readText(join(agentDir, 'install', 'current-version'))
+		const oldReleases = readDir(releasesDir).filter(version => version != current)
+
+		if (!sessions.length && !oldReleases.length) {
+			console.log('Nothing to clean.')
+			return
+		}
+
+		const before = execOrFail('du', ['-sh', agentDir]).split('\t')[0]
+		const targets = [
+			sessions.length && `${sessions.length} session${sessions.length > 1 ? 's' : ''}`,
+			oldReleases.length && `${oldReleases.length} old release${oldReleases.length > 1 ? 's' : ''} (${oldReleases.join(', ')})`,
+		].filter(Boolean)
+		if (!await confirm(`Delete ${targets.join(' and ')}?`)) return
+
+		for (const path of [...sessions, ...oldReleases.map(version => join(releasesDir, version))]) {
+			rmSync(path, { recursive: true, force: true })
+		}
+
+		// A project folder only exists for its sessions.
+		for (const dir of new Set(sessions.map(dirname))) {
+			try { rmdirSync(dir) } catch {}
+		}
+
+		const after = execOrFail('du', ['-sh', agentDir]).split('\t')[0]
+		console.log(`Done. ${tildify(agentDir)}: ${before} -> ${after}`)
+	}, 'Delete pi sessions and stale install releases')
 
 	register('gswc', async () => {
 		const { uniqueNamesGenerator, adjectives, animals } = await import('@joaomoreno/unique-names-generator')
