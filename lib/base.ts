@@ -10,7 +10,7 @@ const defaultExecOptions: ExecFileSyncOptions = {
 
 export function exec(cmd: string, args: readonly string[], options?: ExecFileSyncOptions): string | null {
   try {
-    return execFileSync(cmd, args, { ...defaultExecOptions, ...options, encoding: 'utf8' }).trim();
+    return execFileSync(cmd, args, { ...defaultExecOptions, ...options, encoding: 'utf8' })?.trim() ?? '';
   } catch {
     return null;
   }
@@ -18,9 +18,9 @@ export function exec(cmd: string, args: readonly string[], options?: ExecFileSyn
 
 export function execOrFail(cmd: string, args: readonly string[], options?: ExecFileSyncOptions): string {
   try {
-    return execFileSync(cmd, args, { ...defaultExecOptions, ...options, encoding: 'utf8' }).trim();
-  } catch {
-    process.exit(1);
+    return execFileSync(cmd, args, { ...defaultExecOptions, ...options, encoding: 'utf8' })?.trim() ?? '';
+  } catch (e) {
+    process.exit(e.status || 1);
   }
 }
 

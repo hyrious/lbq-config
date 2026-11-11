@@ -223,6 +223,43 @@ export default function install(register: RegisterFunction) {
 		execOrFail(chrome, chromeArgs, { stdio: 'inherit' })
 	}, 'Open chrome, [-t|-tt|-d|--yolo]')
 
+	register('cu', (_, ...args) => {
+		const command = args[0]
+		if (!args.length || args.some(a => ['--help', '-h'].includes(a))) {
+			const skill = execOrFail('chrome-use', ['skill'])
+			const content = readFileSync(skill, 'utf8')
+			console.log('Usage: `lbq cu <command> [args]`. Run `lbq cu help` for CLI usage.\n')
+			console.log(content.trimEnd())
+			return
+		}
+
+		const env = { ...process.env }
+		let llm: { baseUrl: string, apiKey: string } | undefined
+		if (command == 'start') env.HTTPS_PROXY ??= env.https_proxy || 'http://localhost:7890';
+		if (['agent', 'decide'].includes(command) && !args.some(arg => ['--help', '-h', '--dry-run'].includes(arg))) {
+			model('jev', 'typesafe/jev')
+			if (command == 'agent') model('text', 'deepseek-flash');
+		}
+
+		execOrFail('chrome-use', args, { stdio: 'inherit', env })
+
+		function model(kind: string, name: string) {
+			const prefix = `CHROME_USE_${kind.toUpperCase()}`
+			env[`${prefix}_BASE_URL`] = value(`${prefix}_BASE_URL`, `--${kind}-base-url`, 'baseUrl')
+			env[`${prefix}_API_KEY`] = value(`${prefix}_API_KEY`, `--${kind}-api-key`, 'apiKey')
+			env[`${prefix}_MODEL`] ??= name
+		}
+
+		function value(name: string, flag: string, key: 'baseUrl' | 'apiKey') {
+			if (env[name] != null || args.some(arg => arg == flag || arg.startsWith(flag + '='))) return env[name];
+			llm ??= JSON.parse(execOrFail('oo', ['llm', 'config']))
+			if (!llm || typeof llm[key] != 'string' || !llm[key].trim()) {
+				throw new Error(`oo llm config is missing ${key}`)
+			}
+			return llm[key]
+		}
+	}, 'Run chrome-use with local defaults; no args prints its skill')
+
 	register('deprecate', async (_, ...args) => {
 		const silent = bool(args, ['-s', '--silent'])
 		const exclude = str(args, '--exclude') ?? null
