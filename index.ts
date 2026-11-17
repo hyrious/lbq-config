@@ -3,7 +3,7 @@ import { readdirSync, readFileSync, readlinkSync, rmdirSync, rmSync, writeFileSy
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import tildify from 'tildify';
-import { bool, confirm, editFile, exec, execOrFail, mtime, readDir, readJson, readText, str, writeJson } from './lib/base';
+import { bool, confirm, editFile, exec, execOrFail, mtime, prompt, readDir, readJson, readText, str, writeJson } from './lib/base';
 import { DeprecationsScanner, ProgressLine } from './lib/scanDeprecations';
 
 export default function install(register: RegisterFunction) {
@@ -210,6 +210,30 @@ export default function install(register: RegisterFunction) {
 		execOrFail('git', ['switch', '-C', branchName], { stdio: 'inherit' })
 	}, 'Switch to a random branch')
 
+	register('gprm', async () => {
+		interface PullRequest { number: number, title: string }
+		const main = execOrFail('git', ['symbolic-ref', '-q', '--short', 'HEAD']) == 'main'
+		let pr: PullRequest
+		if (main) {
+			const prs: PullRequest[] = JSON.parse(execOrFail('gh', ['pr', 'list', '--json', 'number,title']))
+			if (!prs.length) {
+				console.log('No open pull requests.')
+				return
+			}
+			for (const pr of prs) console.log(`#${pr.number} ${pr.title}`);
+			const answer = (await prompt('PR number to merge (Enter to cancel): ')).trim().replace(/^#/, '')
+			if (!answer) return;
+			const selected = prs.find(pr => String(pr.number) == answer)
+			if (!selected) throw new Error('Invalid PR number.');
+			pr = selected
+		} else {
+			pr = JSON.parse(execOrFail('gh', ['pr', 'view', '--json', 'number,title']))
+		}
+		if (!await confirm(`Squash and merge #${pr.number} ${pr.title}?`)) return;
+		execOrFail('gh', ['pr', 'merge', String(pr.number), '--squash', '--delete-branch'], { stdio: 'inherit' })
+		execOrFail('git', main ? ['pull', '--prune'] : ['fetch', '--all', '--prune'], { stdio: 'inherit' })
+	}, 'Merge pull request interactively')
+
 	if (macOS) register('chrome', async (_, ...args) => {
 		const test = bool(args, ['-t', '--test'])
 		const test2 = bool(args, ['-tt', '--test2'])
@@ -258,7 +282,7 @@ export default function install(register: RegisterFunction) {
 			}
 			return llm[key]
 		}
-	}, 'Run chrome-use with local defaults; no args prints its skill')
+	}, 'Run chrome-use with local defaults')
 
 	register('deprecate', async (_, ...args) => {
 		const silent = bool(args, ['-s', '--silent'])
