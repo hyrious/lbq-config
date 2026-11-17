@@ -1,5 +1,5 @@
-import { execFileSync } from 'node:child_process';
-import { readdirSync, readFileSync, readlinkSync, rmdirSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync, ExecFileSyncOptions } from 'node:child_process';
+import { readdirSync, readFileSync, readlinkSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import tildify from 'tildify';
@@ -196,7 +196,7 @@ export default function install(register: RegisterFunction) {
 
 		// A project folder only exists for its sessions.
 		for (const dir of new Set(sessions.map(dirname))) {
-			try { rmdirSync(dir) } catch {}
+			rmSync(dir, { recursive: true, force: true })
 		}
 
 		const after = execOrFail('du', ['-sh', agentDir]).split('\t')[0]
@@ -283,6 +283,30 @@ export default function install(register: RegisterFunction) {
 			return llm[key]
 		}
 	}, 'Run chrome-use with local defaults')
+
+	register('oo', () => {
+		const env = { ...process.env, OO_SKILLS_SYNC_DISABLED: '1' }
+		if (exec('oo', ['--version'], { env }) == null) {
+			console.log('https://console.oomol.com/install?target=cli')
+			return
+		}
+
+		const options: ExecFileSyncOptions = { env, stdio: 'inherit' }
+		execOrFail('oo', ['config', 'set', 'skills.bundled.auto_sync', 'false'], options)
+		execOrFail('oo', ['update'], options)
+
+		interface Skill { name: string, kind: string, packageName: string | null }
+		const { skills }: { skills: Skill[] } = JSON.parse(execOrFail('oo', ['skills', 'list', '--json'], { env }))
+		const names = new Set<string>()
+		for (const skill of skills) {
+			if (skill.name === 'oo' || skill.packageName == 'oo-oomol-console') continue
+			names.add(skill.packageName || skill.name)
+		}
+		if (names.size) execOrFail('oo', ['skills', 'uninstall', ...names], options)
+
+		execOrFail('oo', ['skills', 'install', 'oo'], options)
+		execOrFail('oo', ['skills', 'update', 'oo-oomol-console'], options)
+	}, 'Setup / upgrade oo and its skills')
 
 	register('deprecate', async (_, ...args) => {
 		const silent = bool(args, ['-s', '--silent'])
