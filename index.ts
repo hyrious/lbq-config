@@ -124,6 +124,27 @@ export default function install(register: RegisterFunction) {
 		}
 	}, 'Trust current repo, then run codex --yolo')
 
+	register('agy', async (_, ...args) => {
+		const settingsPath = join(homedir(), '.gemini/antigravity-cli/settings.json')
+		const settings = readJson<{ trustedWorkspaces?: string[] }>(settingsPath, {})
+		const cwd = process.cwd()
+		const arr = settings.trustedWorkspaces || []
+		if (!arr.includes(cwd)) {
+			arr.push(cwd)
+			settings.trustedWorkspaces = arr
+			writeJson(settingsPath, settings)
+		}
+		const yolo = '--dangerously-skip-permissions'
+		if (!args.includes(yolo)) args.unshift(yolo);
+		try {
+			const env = { HTTPS_PROXY: 'http://localhost:7890', ...process.env }
+			execFileSync('agy', args, { stdio: 'inherit', env })
+		} catch (e) {
+			if (e.status) process.exitCode = e.status;
+			else throw e
+		}
+	}, 'Trust current dir, then run agy with yolo')
+
 	register('codex', 'clean', async () => {
 		exec('lbq', ['codex', 'app-server', 'daemon', 'stop'], { stdio: 'inherit' })
 		const codexHome = join(homedir(), '.codex')
